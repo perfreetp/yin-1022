@@ -1,0 +1,484 @@
+import { useState } from "react";
+import {
+  User as UserIcon,
+  Mail,
+  Phone,
+  GraduationCap,
+  Award,
+  Edit3,
+  Save,
+  X,
+  Trophy,
+  Medal,
+  Target,
+  CalendarDays,
+  Star,
+  Crown,
+} from "lucide-react";
+import Card from "../components/ui/Card";
+import Button from "../components/ui/Button";
+import Badge from "../components/ui/Badge";
+import { useUserStore } from "../store/useUserStore";
+import { useMatchStore } from "../store/useMatchStore";
+import { positionLabels, weekDays, dayPeriods, formatDate } from "../utils";
+import type { DebatePosition, User } from "../types";
+
+type TabType = "profile" | "ability" | "history";
+
+export default function Members() {
+  const currentUser = useUserStore((s) => s.getCurrentUser());
+  const updateUser = useUserStore((s) => s.updateUser);
+  const matches = useMatchStore((s) => s.matches);
+
+  const [activeTab, setActiveTab] = useState<TabType>("profile");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editData, setEditData] = useState<Partial<User>>(currentUser || {});
+
+  if (!currentUser) return null;
+
+  const handleSave = () => {
+    updateUser(currentUser.id, editData);
+    setIsEditing(false);
+  };
+
+  const togglePosition = (pos: DebatePosition) => {
+    const current = editData.preferredPositions || [];
+    const updated = current.includes(pos)
+      ? current.filter((p) => p !== pos)
+      : [...current, pos];
+    setEditData({ ...editData, preferredPositions: updated });
+  };
+
+  const toggleSlot = (day: number, period: number) => {
+    const current = editData.availableSlots || [];
+    const dayIndex = current.findIndex((s) => s.day === day);
+    if (dayIndex >= 0) {
+      const daySlots = [...current];
+      const periods = daySlots[dayIndex].periods.includes(period)
+        ? daySlots[dayIndex].periods.filter((p) => p !== period)
+        : [...daySlots[dayIndex].periods, period];
+      if (periods.length === 0) {
+        daySlots.splice(dayIndex, 1);
+      } else {
+        daySlots[dayIndex] = { ...daySlots[dayIndex], periods };
+      }
+      setEditData({ ...editData, availableSlots: daySlots });
+    } else {
+      setEditData({
+        ...editData,
+        availableSlots: [...current, { day, periods: [period] }],
+      });
+    }
+  };
+
+  const isSlotAvailable = (day: number, period: number) => {
+    const slots = isEditing ? editData.availableSlots : currentUser.availableSlots;
+    return slots?.some((s) => s.day === day && s.periods.includes(period));
+  };
+
+  const tabs = [
+    { id: "profile" as TabType, label: "个人资料", icon: UserIcon },
+    { id: "ability" as TabType, label: "辩论能力", icon: Target },
+    { id: "history" as TabType, label: "历史战绩", icon: Trophy },
+  ];
+
+  const finishedMatches = matches.filter(
+    (m) => m.status === "finished" && m.result
+  );
+
+  const winRate =
+    currentUser.matchCount > 0
+      ? Math.round((currentUser.winCount / currentUser.matchCount) * 100)
+      : 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Profile Header */}
+      <Card className="overflow-hidden opacity-0 animate-fade-in-up">
+        <div className="relative h-32 md:h-40 bg-gradient-to-r from-primary-700 via-primary-600 to-primary-800">
+          <div className="absolute inset-0 bg-grain-overlay opacity-30" />
+          <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-accent-500/20 blur-2xl" />
+        </div>
+        <div className="px-6 md:px-8 pb-6 -mt-14 md:-mt-16 relative">
+          <div className="flex flex-col md:flex-row md:items-end gap-4 md:gap-6">
+            <div className="relative">
+              <img
+                src={currentUser.avatar}
+                alt={currentUser.name}
+                className="w-28 h-28 md:w-32 md:h-32 rounded-2xl border-4 border-white bg-white shadow-lg"
+              />
+              <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-accent-500 flex items-center justify-center shadow-md">
+                <Crown className="w-4 h-4 text-white" />
+              </div>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h1 className="font-serif text-2xl md:text-3xl font-bold text-ink-800">
+                    {currentUser.name}
+                  </h1>
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <Badge
+                      variant={
+                        currentUser.role === "admin"
+                          ? "accent"
+                          : currentUser.role === "judge"
+                          ? "primary"
+                          : "default"
+                      }
+                    >
+                      {currentUser.role === "admin"
+                        ? "社团干部"
+                        : currentUser.role === "judge"
+                        ? "评委"
+                        : "参赛学生"}
+                    </Badge>
+                    <span className="text-sm text-ink-500 flex items-center gap-1">
+                      <GraduationCap className="w-4 h-4" />
+                      {currentUser.grade} · {currentUser.major}
+                    </span>
+                  </div>
+                </div>
+                {!isEditing ? (
+                  <Button variant="outline" onClick={() => setIsEditing(true)}>
+                    <Edit3 className="w-4 h-4 mr-1.5" />
+                    编辑资料
+                  </Button>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button onClick={handleSave}>
+                      <Save className="w-4 h-4 mr-1.5" />
+                      保存
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        setEditData(currentUser);
+                        setIsEditing(false);
+                      }}
+                    >
+                      <X className="w-4 h-4 mr-1.5" />
+                      取消
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-4 gap-3 mt-6 pt-6 border-t border-cream-200">
+            {[
+              { label: "参赛场次", value: currentUser.matchCount, icon: Trophy, color: "text-primary-600 bg-primary-50" },
+              { label: "胜利场次", value: currentUser.winCount, icon: Medal, color: "text-success bg-green-50" },
+              { label: "最佳辩手", value: currentUser.bestSpeakerCount, icon: Star, color: "text-amber-600 bg-amber-50" },
+              { label: "胜率", value: `${winRate}%`, icon: Target, color: "text-victory bg-red-50" },
+            ].map((stat) => (
+              <div
+                key={stat.label}
+                className="text-center p-3 md:p-4 rounded-xl bg-cream-50"
+              >
+                <div
+                  className={`w-10 h-10 mx-auto rounded-xl ${stat.color} flex items-center justify-center mb-2`}
+                >
+                  <stat.icon className="w-5 h-5" />
+                </div>
+                <p className="font-serif text-xl md:text-2xl font-bold text-ink-800">
+                  {stat.value}
+                </p>
+                <p className="text-xs text-ink-400 mt-1">{stat.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* Tabs */}
+      <div className="flex gap-1 p-1 bg-white rounded-xl border border-cream-300 shadow-card w-fit opacity-0 animate-fade-in-up animate-delay-100">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              activeTab === tab.id
+                ? "bg-primary-600 text-white shadow-sm"
+                : "text-ink-600 hover:bg-cream-100"
+            }`}
+          >
+            <tab.icon className="w-4 h-4" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === "profile" && (
+        <div className="grid md:grid-cols-2 gap-6 opacity-0 animate-fade-in">
+          <Card className="p-6">
+            <h2 className="font-serif text-lg font-bold text-ink-800 mb-4">
+              基本信息
+            </h2>
+            <div className="space-y-4">
+              {[
+                { label: "姓名", key: "name", icon: UserIcon, type: "text" },
+                { label: "年级", key: "grade", icon: GraduationCap, type: "text" },
+                { label: "专业", key: "major", icon: GraduationCap, type: "text" },
+                { label: "邮箱", key: "email", icon: Mail, type: "email" },
+                { label: "电话", key: "phone", icon: Phone, type: "tel" },
+              ].map((field) => (
+                <div key={field.key} className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-primary-50 flex items-center justify-center flex-shrink-0">
+                    <field.icon className="w-5 h-5 text-primary-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <label className="text-xs text-ink-400 block mb-1">
+                      {field.label}
+                    </label>
+                    {isEditing ? (
+                      <input
+                        type={field.type}
+                        value={(editData as any)[field.key] || ""}
+                        onChange={(e) =>
+                          setEditData({ ...editData, [field.key]: e.target.value })
+                        }
+                        className="input"
+                      />
+                    ) : (
+                      <p className="text-sm font-medium text-ink-700">
+                        {(currentUser as any)[field.key]}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <h2 className="font-serif text-lg font-bold text-ink-800 mb-4">
+              个人简介
+            </h2>
+            {isEditing ? (
+              <textarea
+                value={editData.bio || ""}
+                onChange={(e) => setEditData({ ...editData, bio: e.target.value })}
+                rows={6}
+                className="input resize-none"
+                placeholder="介绍一下你自己..."
+              />
+            ) : (
+              <p className="text-sm text-ink-600 leading-relaxed">
+                {currentUser.bio || "还没有个人简介，点击编辑来介绍一下自己吧~"}
+              </p>
+            )}
+
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-ink-700 mb-3">荣誉徽章</h3>
+              <div className="flex flex-wrap gap-2">
+                {currentUser.badges.length > 0 ? (
+                  currentUser.badges.map((badge) => (
+                    <span
+                      key={badge}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-gradient-to-r from-accent-100 to-accent-50 text-accent-700 text-xs font-medium border border-accent-200"
+                    >
+                      <Award className="w-3 h-3" />
+                      {badge}
+                    </span>
+                  ))
+                ) : (
+                  <p className="text-sm text-ink-400">暂无徽章，加油获得更多荣誉吧！</p>
+                )}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === "ability" && (
+        <div className="space-y-6 opacity-0 animate-fade-in">
+          <Card className="p-6">
+            <h2 className="font-serif text-lg font-bold text-ink-800 mb-2">
+              擅长立场
+            </h2>
+            <p className="text-sm text-ink-400 mb-4">
+              选择你擅长或希望担任的辩位（可多选）
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {(Object.keys(positionLabels) as DebatePosition[]).map((pos) => {
+                const selected = isEditing
+                  ? editData.preferredPositions?.includes(pos)
+                  : currentUser.preferredPositions.includes(pos);
+                return (
+                  <button
+                    key={pos}
+                    onClick={() => isEditing && togglePosition(pos)}
+                    className={`relative p-4 rounded-xl border-2 transition-all ${
+                      selected
+                        ? "border-primary-500 bg-primary-50 shadow-md"
+                        : "border-cream-200 bg-white hover:border-cream-300"
+                    } ${!isEditing && "cursor-default"}`}
+                  >
+                    <div
+                      className={`w-12 h-12 mx-auto rounded-xl flex items-center justify-center mb-3 ${
+                        selected ? "bg-primary-600 text-white" : "bg-cream-100 text-ink-400"
+                      }`}
+                    >
+                      <span className="font-serif font-bold text-lg">
+                        {positionLabels[pos][0]}
+                      </span>
+                    </div>
+                    <p
+                      className={`text-center font-semibold ${
+                        selected ? "text-primary-700" : "text-ink-600"
+                      }`}
+                    >
+                      {positionLabels[pos]}
+                    </p>
+                    <p className="text-xs text-ink-400 mt-1 text-center">
+                      {pos === "first" && "开篇立论"}
+                      {pos === "second" && "攻辩+小结"}
+                      {pos === "third" && "攻辩+自由辩"}
+                      {pos === "fourth" && "总结陈词"}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <h2 className="font-serif text-lg font-bold text-ink-800 mb-2">
+              可参赛时段
+            </h2>
+            <p className="text-sm text-ink-400 mb-4">
+              {isEditing ? "点击方格设置你可以参加比赛的时段" : "绿色表示你当前标记的可参赛时段"}
+            </p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr>
+                    <th className="p-2 text-left text-xs font-medium text-ink-400 w-24">
+                      时段
+                    </th>
+                    {weekDays.map((day) => (
+                      <th
+                        key={day}
+                        className="p-2 text-center text-xs font-medium text-ink-400 min-w-[80px]"
+                      >
+                        {day}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayPeriods.map((period) => (
+                    <tr key={period.label} className="border-t border-cream-200">
+                      <td className="p-2">
+                        <p className="text-xs font-medium text-ink-600">{period.label}</p>
+                        <p className="text-[10px] text-ink-400">{period.time}</p>
+                      </td>
+                      {weekDays.map((_, dayIdx) => {
+                        const available = isSlotAvailable(dayIdx, period.value[0]);
+                        return (
+                          <td key={dayIdx} className="p-1.5">
+                            <button
+                              onClick={() => isEditing && toggleSlot(dayIdx, period.value[0])}
+                              className={`w-full h-10 rounded-lg transition-all ${
+                                available
+                                  ? "bg-success/20 border-2 border-success hover:bg-success/30"
+                                  : "bg-cream-100 border-2 border-transparent hover:bg-cream-200"
+                              } ${!isEditing && "cursor-default"}`}
+                            >
+                              {available && (
+                                <CalendarDays className="w-4 h-4 mx-auto text-success" />
+                              )}
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <h2 className="font-serif text-lg font-bold text-ink-800 mb-4">
+              辩论风格标签
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {["逻辑流", "价值流", "数据流", "政策流", "情感流", "文学流", "攻击流", "防守流"].map(
+                (style) => {
+                  const hasStyle = currentUser.debateStyles.includes(style);
+                  return (
+                    <span
+                      key={style}
+                      className={`px-4 py-2 rounded-full text-sm font-medium transition-all cursor-pointer ${
+                        hasStyle
+                          ? "bg-primary-600 text-white shadow-md"
+                          : "bg-cream-100 text-ink-500 hover:bg-cream-200"
+                      }`}
+                    >
+                      {style}
+                    </span>
+                  );
+                }
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === "history" && (
+        <div className="space-y-6 opacity-0 animate-fade-in">
+          <Card className="p-6">
+            <h2 className="font-serif text-lg font-bold text-ink-800 mb-4">
+              比赛记录
+            </h2>
+            {finishedMatches.length > 0 ? (
+              <div className="space-y-3">
+                {finishedMatches.map((match) => (
+                  <div
+                    key={match.id}
+                    className="p-4 rounded-xl bg-cream-50 border border-cream-200 flex items-center justify-between gap-4"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-serif font-semibold text-ink-800">
+                        {match.title}
+                      </h3>
+                      <p className="text-sm text-ink-500 mt-1">
+                        {formatDate(match.date)} · {match.venue}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 flex-shrink-0">
+                      <div className="text-right">
+                        <p className="font-mono font-bold text-lg text-ink-800">
+                          {match.result?.proScore} : {match.result?.conScore}
+                        </p>
+                        <p className="text-xs text-success font-medium">获胜</p>
+                      </div>
+                      {match.result?.bestSpeakerId === currentUser.id && (
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-md">
+                          <Star className="w-5 h-5 text-white fill-white" />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <Trophy className="w-16 h-16 mx-auto text-ink-200 mb-4" />
+                <p className="text-ink-400">暂无比赛记录</p>
+                <p className="text-sm text-ink-300 mt-1">
+                  快去报名参加比赛吧！
+                </p>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
