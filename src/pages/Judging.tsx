@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Gavel,
   Star,
@@ -7,32 +7,46 @@ import {
   CheckCircle,
   Clock,
   Send,
-  User,
   Users,
   Quote,
-  ChevronRight,
   ThumbsUp,
+  AlertCircle,
+  Eye,
 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import { useMatchStore } from "../store/useMatchStore";
 import { useUserStore } from "../store/useUserStore";
-import { judgingStatusLabels, scoreCategoryLabels, formatDate } from "../utils";
-import type { JudgingTask, Score } from "../types";
+import {
+  judgingStatusLabels,
+  scoreCategoryLabels,
+  formatDate,
+  positionLabels,
+  cn,
+} from "../utils";
+import type { JudgingTask, Score, MatchParticipant } from "../types";
 
 type ScoreCategory = keyof typeof scoreCategoryLabels;
 
 export default function Judging() {
-  const currentUser = useUserStore((s) => s.getCurrentUser());
+  const currentUserId = useUserStore((s) => s.currentUserId);
+  const currentUser = useUserStore((s) => s.getUserById(currentUserId));
   const users = useUserStore((s) => s.users);
   const matches = useMatchStore((s) => s.matches);
+  const participants = useMatchStore((s) => s.participants);
   const submitJudging = useMatchStore((s) => s.submitJudging);
-  const tasks = useMatchStore((s) =>
-    s.judgingTasks.filter((t) => t.judgeId === currentUser?.id || currentUser?.role === "judge")
-  );
+  const allTasks = useMatchStore((s) => s.judgingTasks);
 
-  const [selectedTask, setSelectedTask] = useState<JudgingTask | null>(tasks.find(t => t.status !== "completed") || null);
+  // 任务过滤：评委只看分配给自己的；admin 看全部
+  const tasks = useMemo(() => {
+    if (currentUser?.role === "admin") return allTasks;
+    return allTasks.filter((t) => t.judgeId === currentUserId);
+  }, [allTasks, currentUserId, currentUser?.role]);
+
+  const [selectedTask, setSelectedTask] = useState<JudgingTask | null>(
+    tasks.find((t) => t.status !== "completed") || tasks[0] || null
+  );
   const [proScores, setProScores] = useState<Record<string, number>>({});
   const [conScores, setConScores] = useState<Record<string, number>>({});
   const [proNotes, setProNotes] = useState<Record<string, string>>({});
@@ -41,10 +55,65 @@ export default function Judging() {
   const [bestSpeakerId, setBestSpeakerId] = useState("");
   const [peerReviews, setPeerReviews] = useState<Record<string, number>>({});
   const [peerComment, setPeerComment] = useState("");
+  const [toast, setToast] = useState<{ type: "success" | "info"; message: string } | null>(null);
+
+  const showToast = (type: "success" | "info", message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 2500);
+  };
 
   const match = selectedTask
     ? matches.find((m) => m.id === selectedTask.matchId)
     : null;
+
+  // 获取 match 的正反方 teamId
+  const matchParticipants = useMemo<MatchParticipant[]>(() => {
+    if (!match) return [];
+    return participants.filter((p) => p.matchId === match.id);
+  }, [participants, match]);
+
+  const proTeamId = matchParticipants.find((p) => p.side === "pro")?.teamId || "pro";
+  const conTeamId = matchParticipants.find((p) => p.side === "con")?.teamId || "con";
+
+  // 该场比赛的辩手列表
+  const speakers = useMemo(() => {
+    if (!match) return [];
+    const list: {
+      id: string;
+      name: string;
+      position: string;
+      side: "pro" | "con";
+      teamName?: string;
+    }[] = [];
+    matchParticipants.forEach((p) => {
+      const team = teamsFromParticipant(p.teamId);
+      p.speakers.forEach((sp) => {
+        const u = users.find((x) => x.id === sp.userId);
+        if (!u) return;
+        list.push({
+          id: u.id,
+          name: u.name,
+          position: positionLabels[sp.position] || sp.position,
+          side: p.side,
+          teamName: team,
+        });
+      });
+    });
+    // fallback: 如果没有 participant 数据，用默认
+    if (list.length === 0) {
+      [
+        { id: "u001", name: "张子墨", position: "二辩", side: "pro" as const },
+        { id: "u002", name: "李思源", position: "一辩/四辩", side: "pro" as const },
+        { id: "u004", name: "陈浩然", position: "三辩", side: "con" as const },
+        { id: "u005", name: "刘雅婷", position: "二辩/四辩", side: "con" as const },
+      ].forEach((s) => list.push(s));
+    }
+    return list;
+  }, [match, matchParticipants, users]);
+
+  function teamsFromParticipant(teamId: string): string | undefined {
+    return undefined; // teamStore 在另一模块，不需要
+  }
 
   const categories: ScoreCategory[] = [
     "opening_statement",
@@ -53,10 +122,59 @@ export default function Judging() {
     "closing_statement",
   ];
 
+  // **核心：当 selectedTask 变化时，从已保存的 scores 回显**
+  useEffect(() => {
+    if (!selectedTask) {
+      setProScores({});
+      setConScores({});
+      setProNotes({});
+      setConNotes({});
+      setComment("");
+      setBestSpeakerId("");
+      return;
+    }
+
+    const nextPro: Record<string, number> = {};
+    const nextCon: Record<string, number> = {};
+    const nextProNote: Record<string, string> = {};
+    const nextConNote: Record<string, string> = {};
+
+    // 把 scores 数组按 teamId 映射到 pro / con
+    selectedTask.scores.forEach((s: Score) => {
+      // teamId 可能是真实队伍 id（t001/t002）或 字符串 pro/con
+      let side: "pro" | "con" | null = null;
+      if (s.teamId === "pro" || s.teamId === proTeamId) side = "pro";
+      else if (s.teamId === "con" || s.teamId === conTeamId) side = "con";
+
+      if (!side) {
+        // fallback：如果没法判断，就按顺序第一个 pro，第二个 con
+        side =
+          selectedTask.scores.findIndex((x) => x.id === s.id) <
+          selectedTask.scores.length / 2
+            ? "pro"
+            : "con";
+      }
+      if (side === "pro") {
+        nextPro[s.category] = s.score;
+        if (s.note) nextProNote[s.category] = s.note;
+      } else {
+        nextCon[s.category] = s.score;
+        if (s.note) nextConNote[s.category] = s.note;
+      }
+    });
+
+    setProScores(nextPro);
+    setConScores(nextCon);
+    setProNotes(nextProNote);
+    setConNotes(nextConNote);
+    setComment(selectedTask.comment || "");
+    setBestSpeakerId(selectedTask.bestSpeakerId || "");
+  }, [selectedTask, proTeamId, conTeamId]);
+
   const calcTotal = (scores: Record<string, number>) => {
     return categories.reduce((sum, cat) => {
       const weight = scoreCategoryLabels[cat].weight;
-      return sum + (scores[cat] || 0) * weight / 100 * 100;
+      return sum + (scores[cat] || 0) * weight;
     }, 0);
   };
 
@@ -82,40 +200,52 @@ export default function Judging() {
 
   const handleSubmit = () => {
     if (!selectedTask) return;
+    // 保存时按真实 teamId 存（和 mock 一致）
     const allScores: Score[] = [
       ...categories.map((cat) => ({
-        id: `s-pro-${cat}`,
+        id: `sp-${selectedTask.id}-${proTeamId}-${cat}`,
         taskId: selectedTask.id,
-        teamId: "pro",
+        teamId: proTeamId,
         category: cat,
         score: proScores[cat] || 0,
         note: proNotes[cat],
       })),
       ...categories.map((cat) => ({
-        id: `s-con-${cat}`,
+        id: `sc-${selectedTask.id}-${conTeamId}-${cat}`,
         taskId: selectedTask.id,
-        teamId: "con",
+        teamId: conTeamId,
         category: cat,
         score: conScores[cat] || 0,
         note: conNotes[cat],
       })),
     ];
     submitJudging(selectedTask.id, allScores, comment, bestSpeakerId);
-    setSelectedTask(null);
+    showToast("success", "评审已提交！");
+    // 切换到下一个待办任务
+    const nextPending = tasks.find(
+      (t) => t.id !== selectedTask.id && t.status !== "completed"
+    );
+    setTimeout(() => setSelectedTask(nextPending || tasks[0] || null), 300);
   };
 
   const pendingTasks = tasks.filter((t) => t.status !== "completed");
   const completedTasks = tasks.filter((t) => t.status === "completed");
-
-  const speakers = [
-    { id: "u001", name: "张子墨", position: "二辩" },
-    { id: "u002", name: "李思源", position: "一辩/四辩" },
-    { id: "u004", name: "陈浩然", position: "三辩" },
-    { id: "u005", name: "刘雅婷", position: "二辩/四辩" },
-  ];
+  const isCompleted = selectedTask?.status === "completed";
 
   return (
     <div className="space-y-6">
+      {toast && (
+        <div
+          className={cn(
+            "fixed top-20 right-6 z-[100] px-5 py-3 rounded-xl shadow-lg animate-fade-in-up flex items-center gap-2",
+            toast.type === "success" ? "bg-success text-white" : "bg-primary-600 text-white"
+          )}
+        >
+          <CheckCircle className="w-4 h-4" />
+          <span className="text-sm font-medium">{toast.message}</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 opacity-0 animate-fade-in-up">
         <div>
@@ -124,16 +254,18 @@ export default function Judging() {
             评审中心
           </h1>
           <p className="text-sm text-ink-400 mt-1">
-            在线打分、撰写评语、评选最佳辩手
+            {currentUser?.role === "admin"
+              ? "管理员视图：查看所有评审任务"
+              : `欢迎 ${currentUser?.name}，查看分配给你的评审任务`}
           </p>
         </div>
-        <div className="flex gap-3">
-          <div className="px-4 py-2 rounded-xl bg-amber-100 text-amber-700">
-            <Clock className="w-4 h-4 inline mr-1.5" />
+        <div className="flex gap-3 flex-wrap">
+          <div className="px-4 py-2 rounded-xl bg-amber-100 text-amber-700 flex items-center gap-2">
+            <Clock className="w-4 h-4" />
             <span className="text-sm font-medium">待评审 {pendingTasks.length}</span>
           </div>
-          <div className="px-4 py-2 rounded-xl bg-green-100 text-green-700">
-            <CheckCircle className="w-4 h-4 inline mr-1.5" />
+          <div className="px-4 py-2 rounded-xl bg-green-100 text-green-700 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4" />
             <span className="text-sm font-medium">已完成 {completedTasks.length}</span>
           </div>
         </div>
@@ -147,42 +279,61 @@ export default function Judging() {
               <Users className="w-5 h-5 text-primary-600" />
               评审任务
             </h2>
-            <div className="space-y-2">
-              {tasks.map((task) => {
-                const m = matches.find((x) => x.id === task.matchId);
-                return (
-                  <button
-                    key={task.id}
-                    onClick={() => setSelectedTask(task)}
-                    className={`w-full text-left p-3 rounded-xl border-2 transition-all ${
-                      selectedTask?.id === task.id
-                        ? "border-primary-500 bg-primary-50 shadow-md"
-                        : "border-transparent bg-cream-50 hover:bg-cream-100"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      <Badge
-                        variant={
-                          task.status === "completed"
-                            ? "success"
-                            : task.status === "in_progress"
-                            ? "warning"
-                            : "default"
-                        }
-                      >
-                        {judgingStatusLabels[task.status].label}
-                      </Badge>
-                    </div>
-                    <p className="text-sm font-semibold text-ink-800 line-clamp-1">
-                      {m?.title}
-                    </p>
-                    <p className="text-xs text-ink-400 mt-1">
-                      {m && formatDate(m.date)} · {m?.venue}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
+
+            {tasks.length === 0 ? (
+              <div className="text-center py-8 text-sm text-ink-400">
+                <Gavel className="w-10 h-10 mx-auto text-ink-200 mb-2" />
+                暂无分配给你的评审任务
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {tasks.map((task) => {
+                  const m = matches.find((x) => x.id === task.matchId);
+                  const isSel = selectedTask?.id === task.id;
+                  return (
+                    <button
+                      key={task.id}
+                      onClick={() => setSelectedTask(task)}
+                      className={cn(
+                        "w-full text-left p-3 rounded-xl border-2 transition-all",
+                        isSel
+                          ? "border-primary-500 bg-primary-50 shadow-md"
+                          : "border-transparent bg-cream-50 hover:bg-cream-100"
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <Badge
+                          variant={
+                            task.status === "completed"
+                              ? "success"
+                              : task.status === "in_progress"
+                              ? "warning"
+                              : "default"
+                          }
+                        >
+                          {judgingStatusLabels[task.status].label}
+                        </Badge>
+                        {task.status === "completed" && (
+                          <Eye className="w-3.5 h-3.5 text-ink-400" />
+                        )}
+                      </div>
+                      <p className="text-sm font-semibold text-ink-800 line-clamp-1">
+                        {m?.title}
+                      </p>
+                      <p className="text-xs text-ink-400 mt-1">
+                        {m && formatDate(m.date)} · {m?.venue}
+                      </p>
+                      {task.status === "completed" && task.bestSpeakerId && (
+                        <p className="text-[11px] text-accent-600 mt-1.5 flex items-center gap-1">
+                          <Award className="w-3 h-3" />
+                          最佳辩手：{users.find((u) => u.id === task.bestSpeakerId)?.name}
+                        </p>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </Card>
 
           {/* Peer Review */}
@@ -225,11 +376,12 @@ export default function Judging() {
                         className="p-0.5"
                       >
                         <Star
-                          className={`w-4 h-4 ${
+                          className={cn(
+                            "w-4 h-4 transition-colors",
                             (peerReviews[speaker.id] || 0) >= star
                               ? "text-amber-400 fill-amber-400"
                               : "text-ink-200"
-                          }`}
+                          )}
                         />
                       </button>
                     ))}
@@ -256,16 +408,24 @@ export default function Judging() {
               {/* Match Info */}
               <Card className="overflow-hidden">
                 <div className="p-5 bg-gradient-to-r from-primary-600 to-primary-700 text-white">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between flex-wrap gap-3">
                     <div>
                       <h2 className="font-serif text-xl font-bold">{match.title}</h2>
                       <p className="text-primary-200 text-sm mt-1">
                         {formatDate(match.date)} · {match.time} · {match.venue}
                       </p>
                     </div>
-                    <Badge variant="accent" className="!bg-accent-400 !text-primary-900">
-                      {match.round}
-                    </Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="accent" className="!bg-accent-400 !text-primary-900">
+                        {match.round}
+                      </Badge>
+                      {isCompleted && (
+                        <Badge variant="success" className="!bg-green-400 !text-green-900">
+                          <Eye className="w-3 h-3 mr-1" />
+                          已提交
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-4 p-4 rounded-xl bg-white/10 backdrop-blur-sm">
                     <p className="text-sm">
@@ -304,6 +464,11 @@ export default function Judging() {
                 <h3 className="font-serif font-bold text-ink-800 mb-4 flex items-center gap-2">
                   <Star className="w-5 h-5 text-accent-500" />
                   分项评分
+                  {isCompleted && (
+                    <Badge variant="default" className="ml-2">
+                      只读模式 - 已提交数据
+                    </Badge>
+                  )}
                 </h3>
                 <div className="space-y-6">
                   {categories.map((cat) => (
@@ -325,7 +490,7 @@ export default function Judging() {
                               {proScores[cat] || 0}
                             </span>
                           </div>
-                          {selectedTask.status !== "completed" ? (
+                          {!isCompleted ? (
                             <>
                               <input
                                 type="range"
@@ -342,11 +507,12 @@ export default function Judging() {
                                   <button
                                     key={v}
                                     onClick={() => handleScoreChange("pro", cat, v)}
-                                    className={`flex-1 py-1 text-[10px] rounded transition-colors ${
+                                    className={cn(
+                                      "flex-1 py-1 text-[10px] rounded transition-colors",
                                       proScores[cat] === v
                                         ? "bg-victory text-white"
                                         : "bg-white text-ink-500 hover:bg-red-100"
-                                    }`}
+                                    )}
                                   >
                                     {v}
                                   </button>
@@ -365,9 +531,12 @@ export default function Judging() {
                             type="text"
                             value={proNotes[cat] || ""}
                             onChange={(e) => handleNoteChange("pro", cat, e.target.value)}
-                            placeholder="评语（可选）"
-                            className="input !py-1.5 !text-xs mt-2 !bg-white"
-                            disabled={selectedTask.status === "completed"}
+                            placeholder={isCompleted ? "（无评语）" : "评语（可选）"}
+                            className={cn(
+                              "input !py-1.5 !text-xs mt-2 !bg-white",
+                              isCompleted && "!bg-cream-50 !text-ink-600 cursor-default"
+                            )}
+                            disabled={isCompleted}
                           />
                         </div>
                         {/* Con */}
@@ -378,7 +547,7 @@ export default function Judging() {
                               {conScores[cat] || 0}
                             </span>
                           </div>
-                          {selectedTask.status !== "completed" ? (
+                          {!isCompleted ? (
                             <>
                               <input
                                 type="range"
@@ -395,11 +564,12 @@ export default function Judging() {
                                   <button
                                     key={v}
                                     onClick={() => handleScoreChange("con", cat, v)}
-                                    className={`flex-1 py-1 text-[10px] rounded transition-colors ${
+                                    className={cn(
+                                      "flex-1 py-1 text-[10px] rounded transition-colors",
                                       conScores[cat] === v
                                         ? "bg-primary-600 text-white"
                                         : "bg-white text-ink-500 hover:bg-blue-100"
-                                    }`}
+                                    )}
                                   >
                                     {v}
                                   </button>
@@ -418,9 +588,12 @@ export default function Judging() {
                             type="text"
                             value={conNotes[cat] || ""}
                             onChange={(e) => handleNoteChange("con", cat, e.target.value)}
-                            placeholder="评语（可选）"
-                            className="input !py-1.5 !text-xs mt-2 !bg-white"
-                            disabled={selectedTask.status === "completed"}
+                            placeholder={isCompleted ? "（无评语）" : "评语（可选）"}
+                            className={cn(
+                              "input !py-1.5 !text-xs mt-2 !bg-white",
+                              isCompleted && "!bg-cream-50 !text-ink-600 cursor-default"
+                            )}
+                            disabled={isCompleted}
                           />
                         </div>
                       </div>
@@ -439,41 +612,70 @@ export default function Judging() {
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-ink-700 mb-2">
                     评选最佳辩手
+                    {isCompleted && bestSpeakerId && (
+                      <Badge variant="accent" className="ml-2">
+                        已选择
+                      </Badge>
+                    )}
                   </label>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {speakers.map((speaker) => (
-                      <button
-                        key={speaker.id}
-                        onClick={() =>
-                          selectedTask.status !== "completed" &&
-                          setBestSpeakerId(speaker.id)
-                        }
-                        disabled={selectedTask.status === "completed"}
-                        className={`p-3 rounded-xl border-2 transition-all text-left ${
-                          bestSpeakerId === speaker.id
-                            ? "border-accent-500 bg-accent-50 shadow-md"
-                            : "border-cream-200 bg-white hover:border-cream-300"
-                        } ${selectedTask.status === "completed" && "cursor-default"}`}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                          <img
-                            src={users.find((u) => u.id === speaker.id)?.avatar}
-                            alt=""
-                            className="w-7 h-7 rounded-full"
-                          />
-                          <div className="relative">
-                            {bestSpeakerId === speaker.id && (
-                              <Award className="w-4 h-4 absolute -top-2 -right-2 text-accent-500 fill-accent-200" />
+                  {speakers.length === 0 ? (
+                    <p className="text-xs text-ink-400">暂无参赛辩手数据</p>
+                  ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {speakers.map((speaker) => {
+                        const isSelected = bestSpeakerId === speaker.id;
+                        return (
+                          <button
+                            key={speaker.id + speaker.side}
+                            onClick={() =>
+                              !isCompleted && setBestSpeakerId(speaker.id)
+                            }
+                            disabled={isCompleted}
+                            className={cn(
+                              "p-3 rounded-xl border-2 transition-all text-left",
+                              isSelected
+                                ? "border-accent-500 bg-accent-50 shadow-md"
+                                : "border-cream-200 bg-white hover:border-cream-300",
+                              isCompleted && "cursor-default"
                             )}
-                          </div>
-                        </div>
-                        <p className="text-sm font-semibold text-ink-800">
-                          {speaker.name}
-                        </p>
-                        <p className="text-[10px] text-ink-400">{speaker.position}</p>
-                      </button>
-                    ))}
-                  </div>
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <img
+                                src={
+                                  users.find((u) => u.id === speaker.id)?.avatar
+                                }
+                                alt=""
+                                className="w-7 h-7 rounded-full"
+                              />
+                              <div className="relative">
+                                <Badge
+                                  variant={speaker.side === "pro" ? "danger" : "primary"}
+                                  className="!text-[9px] !px-1.5 !py-0"
+                                >
+                                  {speaker.side === "pro" ? "正" : "反"}
+                                </Badge>
+                                {isSelected && (
+                                  <Award className="w-4 h-4 absolute -top-2 -right-2 text-accent-500 fill-accent-200" />
+                                )}
+                              </div>
+                            </div>
+                            <p className="text-sm font-semibold text-ink-800 truncate">
+                              {speaker.name}
+                            </p>
+                            <p className="text-[10px] text-ink-400 truncate">
+                              {speaker.position}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {isCompleted && !bestSpeakerId && (
+                    <p className="text-xs text-ink-400 mt-2 flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      本场未标注最佳辩手
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -482,21 +684,29 @@ export default function Judging() {
                     评审总评
                   </label>
                   <textarea
-                    value={comment || selectedTask.comment}
+                    value={comment || ""}
                     onChange={(e) => setComment(e.target.value)}
-                    placeholder="请写下你对本场比赛的整体评价，包括双方的亮点、不足以及建议..."
+                    placeholder={
+                      isCompleted
+                        ? "（本场无总评）"
+                        : "请写下你对本场比赛的整体评价，包括双方的亮点、不足以及建议..."
+                    }
                     rows={5}
-                    className="input resize-none"
-                    disabled={selectedTask.status === "completed"}
+                    className={cn(
+                      "input resize-none",
+                      isCompleted && "!bg-cream-50 !text-ink-700 cursor-default"
+                    )}
+                    disabled={isCompleted}
                   />
-                  {selectedTask.status === "completed" && (
-                    <p className="text-xs text-ink-400 mt-2">
-                      本场评审已于 {selectedTask.submittedAt && formatDate(selectedTask.submittedAt)} 提交
+                  {isCompleted && selectedTask.submittedAt && (
+                    <p className="text-xs text-ink-400 mt-2 flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                      评审于 {formatDate(selectedTask.submittedAt)} 提交
                     </p>
                   )}
                 </div>
 
-                {selectedTask.status !== "completed" && (
+                {!isCompleted ? (
                   <div className="flex gap-3 mt-6 pt-5 border-t border-cream-200">
                     <Button variant="ghost" className="flex-1">
                       保存草稿
@@ -510,6 +720,13 @@ export default function Judging() {
                       <Send className="w-4 h-4 mr-1.5" />
                       提交评审
                     </Button>
+                  </div>
+                ) : (
+                  <div className="mt-6 pt-5 border-t border-cream-200 text-center">
+                    <Badge variant="success" className="!px-4 !py-1.5 !text-xs">
+                      <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                      评审已提交，感谢你的认真工作
+                    </Badge>
                   </div>
                 )}
               </Card>

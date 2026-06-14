@@ -1,22 +1,25 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import type { Team, TeamMember, LeaderboardEntry } from "../types";
+import type { Team, TeamMember, LeaderboardEntry, BracketMatch } from "../types";
 import { mockTeams, mockTeamMembers, mockLeaderboard } from "../data/teams";
 
 interface TeamState {
   teams: Team[];
   teamMembers: TeamMember[];
   leaderboard: LeaderboardEntry[];
+  brackets: BracketMatch[];
   createTeam: (team: Team, members: TeamMember[]) => void;
   updateTeam: (id: string, data: Partial<Team>) => void;
   addMember: (teamId: string, member: TeamMember) => void;
   updateMember: (memberId: string, data: Partial<TeamMember>) => void;
   removeMember: (teamMemberId: string) => void;
+  swapMembers: (teamId: string, formalId: string, substituteId: string) => void;
   archiveTeam: (id: string) => void;
   disbandTeam: (id: string) => void;
   getTeamById: (id: string) => Team | undefined;
   getTeamMembers: (teamId: string) => TeamMember[];
   getTeamsByUser: (userId: string) => Team[];
+  setBrackets: (brackets: BracketMatch[]) => void;
 }
 
 export const useTeamStore = create<TeamState>()(
@@ -25,6 +28,7 @@ export const useTeamStore = create<TeamState>()(
       teams: mockTeams,
       teamMembers: mockTeamMembers,
       leaderboard: mockLeaderboard,
+      brackets: [],
       createTeam: (team, members) =>
         set({
           teams: [...get().teams, team],
@@ -50,6 +54,22 @@ export const useTeamStore = create<TeamState>()(
         set({
           teamMembers: get().teamMembers.filter((m) => m.id !== teamMemberId),
         }),
+      swapMembers: (teamId, formalId, substituteId) => {
+        const formal = get().teamMembers.find((m) => m.id === formalId);
+        const substitute = get().teamMembers.find((m) => m.id === substituteId);
+        if (!formal || !substitute) return;
+        set({
+          teamMembers: get().teamMembers.map((m) => {
+            if (m.id === formalId) {
+              return { ...m, isSubstitute: true, position: substitute.position };
+            }
+            if (m.id === substituteId) {
+              return { ...m, isSubstitute: false, position: formal.position };
+            }
+            return m;
+          }),
+        });
+      },
       archiveTeam: (id) =>
         set({
           teams: get().teams.map((t) =>
@@ -70,6 +90,7 @@ export const useTeamStore = create<TeamState>()(
           .map((m) => m.teamId);
         return get().teams.filter((t) => memberTeamIds.includes(t.id));
       },
+      setBrackets: (brackets) => set({ brackets }),
     }),
     {
       name: "debate-team-storage",

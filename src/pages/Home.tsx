@@ -51,14 +51,11 @@ export default function Home() {
 
   const handleRegister = (matchId: string) => {
     if (registeredMatches.has(matchId)) return;
-    registerMatch({
-      id: generateId("r"),
-      matchId,
-      userId: currentUserId,
-      status: "pending",
-      registeredAt: new Date().toISOString(),
-    });
-    setRegisteredMatches((prev) => new Set([...prev, matchId]));
+    const currentUser = users.find((u) => u.id === currentUserId);
+    const result = registerMatch(matchId, currentUserId, currentUser?.grade || "大一");
+    if (result.ok) {
+      setRegisteredMatches((prev) => new Set([...prev, matchId]));
+    }
   };
 
   const handleAddComment = (announcementId: string) => {

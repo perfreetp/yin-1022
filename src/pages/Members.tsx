@@ -29,6 +29,8 @@ export default function Members() {
   const currentUser = useUserStore((s) => s.getCurrentUser());
   const updateUser = useUserStore((s) => s.updateUser);
   const matches = useMatchStore((s) => s.matches);
+  const participants = useMatchStore((s) => s.participants);
+  const getMatchesByUser = useMatchStore((s) => s.getMatchesByUser);
 
   const [activeTab, setActiveTab] = useState<TabType>("profile");
   const [isEditing, setIsEditing] = useState(false);
@@ -82,9 +84,24 @@ export default function Members() {
     { id: "history" as TabType, label: "历史战绩", icon: Trophy },
   ];
 
-  const finishedMatches = matches.filter(
+  const userMatches = currentUser ? getMatchesByUser(currentUser.id) : [];
+  const finishedMatches = userMatches.filter(
     (m) => m.status === "finished" && m.result
   );
+
+  const getUserSideInMatch = (matchId: string, userId: string): "pro" | "con" | null => {
+    const participant = participants.find(
+      (p) => p.matchId === matchId && p.speakers.some((s) => s.userId === userId)
+    );
+    return participant ? participant.side : null;
+  };
+
+  const isWinner = (match: (typeof finishedMatches)[number], userId: string): boolean | null => {
+    if (!match.result) return null;
+    const side = getUserSideInMatch(match.id, userId);
+    if (!side) return null;
+    return match.result.winner === side;
+  };
 
   const winRate =
     currentUser.matchCount > 0
@@ -438,34 +455,56 @@ export default function Members() {
             </h2>
             {finishedMatches.length > 0 ? (
               <div className="space-y-3">
-                {finishedMatches.map((match) => (
-                  <div
-                    key={match.id}
-                    className="p-4 rounded-xl bg-cream-50 border border-cream-200 flex items-center justify-between gap-4"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-serif font-semibold text-ink-800">
-                        {match.title}
-                      </h3>
-                      <p className="text-sm text-ink-500 mt-1">
-                        {formatDate(match.date)} · {match.venue}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <div className="text-right">
-                        <p className="font-mono font-bold text-lg text-ink-800">
-                          {match.result?.proScore} : {match.result?.conScore}
-                        </p>
-                        <p className="text-xs text-success font-medium">获胜</p>
-                      </div>
-                      {match.result?.bestSpeakerId === currentUser.id && (
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-md">
-                          <Star className="w-5 h-5 text-white fill-white" />
+                {finishedMatches.map((match) => {
+                  const userSide = getUserSideInMatch(match.id, currentUser.id);
+                  const won = isWinner(match, currentUser.id);
+                  const sideLabel = userSide === "pro" ? "正方" : userSide === "con" ? "反方" : "参与";
+                  const sideDesc = userSide === "pro" ? match.proDescription : userSide === "con" ? match.conDescription : "";
+                  return (
+                    <div
+                      key={match.id}
+                      className="p-4 rounded-xl bg-cream-50 border border-cream-200 flex items-center justify-between gap-4"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-serif font-semibold text-ink-800">
+                            {match.title}
+                          </h3>
+                          <Badge variant={userSide === "pro" ? "primary" : "default"}>
+                            {sideLabel}
+                          </Badge>
                         </div>
-                      )}
+                        {sideDesc && (
+                          <p className="text-xs text-ink-500 mt-1 truncate">
+                            {sideDesc}
+                          </p>
+                        )}
+                        <p className="text-sm text-ink-500 mt-1">
+                          {formatDate(match.date)} · {match.venue}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <div className="text-right">
+                          <p className="font-mono font-bold text-lg text-ink-800">
+                            {match.result?.proScore} : {match.result?.conScore}
+                          </p>
+                          {won === true ? (
+                            <p className="text-xs text-success font-medium">获胜</p>
+                          ) : won === false ? (
+                            <p className="text-xs text-defeat font-medium">惜败</p>
+                          ) : (
+                            <p className="text-xs text-ink-400 font-medium">参与</p>
+                          )}
+                        </div>
+                        {match.result?.bestSpeakerId === currentUser.id && (
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-amber-400 to-amber-600 flex items-center justify-center shadow-md">
+                            <Star className="w-5 h-5 text-white fill-white" />
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="text-center py-12">

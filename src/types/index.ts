@@ -53,7 +53,7 @@ export interface TeamMember {
   teamId: string;
   userId: string;
   position: DebatePosition | null;
-  status: "invited" | "confirmed" | "rejected";
+  status: "invited" | "applied" | "confirmed" | "rejected";
   isSubstitute: boolean;
   joinedAt: string;
 }
@@ -206,4 +206,17 @@ export interface CalendarEvent {
   venue: string;
   type: "match" | "training" | "meeting";
   status: MatchStatus | "scheduled";
+}
+
+export interface BracketMatch {
+  id: string;
+  round: string;
+  proTeamId: string | null;
+  conTeamId: string | null;
+  venue: string;
+  date: string;
+  time: string;
+  proScore?: number;
+  conScore?: number;
+  winner?: "pro" | "con" | null;
 }
