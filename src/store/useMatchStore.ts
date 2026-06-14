@@ -60,11 +60,12 @@ interface MatchState {
   checkAllConflicts: (matchId: string, userId: string, userGrade: string) => ValidationResult;
   registerMatch: (matchId: string, userId: string, userGrade: string, teamId?: string) => ValidationResult;
   approveRegistration: (regId: string, userGrade: string) => ValidationResult;
-  rejectRegistration: (id: string) => void;
+  rejectRegistration: (id: string, reason?: string) => void;
   getMatchesByUser: (userId: string) => Match[];
   getMatchById: (id: string) => Match | undefined;
   getJudgeTasks: (judgeId: string) => JudgingTask[];
   submitJudging: (taskId: string, scores: JudgingTask["scores"], comment: string, bestSpeakerId: string) => void;
+  saveDraftJudging: (taskId: string, scores: JudgingTask["scores"], comment: string, bestSpeakerId?: string) => void;
 }
 
 export const useMatchStore = create<MatchState>()(
@@ -213,16 +214,16 @@ export const useMatchStore = create<MatchState>()(
 
         set({
           registrations: state.registrations.map((r) =>
-            r.id === regId ? { ...r, status: "approved" } : r
+            r.id === regId ? { ...r, status: "approved", reviewedAt: new Date().toISOString() } : r
           ),
         });
         return { ok: true };
       },
 
-      rejectRegistration: (id) =>
+      rejectRegistration: (id, reason) =>
         set({
           registrations: get().registrations.map((r) =>
-            r.id === id ? { ...r, status: "rejected" } : r
+            r.id === id ? { ...r, status: "rejected", reviewedAt: new Date().toISOString(), rejectReason: reason } : r
           ),
         }),
 
@@ -256,6 +257,21 @@ export const useMatchStore = create<MatchState>()(
                   comment,
                   bestSpeakerId,
                   submittedAt: new Date().toISOString(),
+                }
+              : t
+          ),
+        }),
+
+      saveDraftJudging: (taskId, scores, comment, bestSpeakerId) =>
+        set({
+          judgingTasks: get().judgingTasks.map((t) =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  status: t.status === "completed" ? "completed" : "in_progress",
+                  scores,
+                  comment,
+                  bestSpeakerId,
                 }
               : t
           ),

@@ -249,6 +249,7 @@ export default function Teams() {
   const handleSwap = () => {
     if (!swapTeamId || !swapFormalId || !swapSubId) return;
     swapMembers(swapTeamId, swapFormalId, swapSubId);
+    recalcTeamStatus(swapTeamId);
     setShowSwapModal(false);
     showToast("success", "已完成正式队员与替补的互换");
   };

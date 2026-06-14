@@ -53,6 +53,7 @@ export default function Schedule() {
   const teamMembers = useTeamStore((s) => s.teamMembers);
   const brackets = useTeamStore((s) => s.brackets);
   const setBrackets = useTeamStore((s) => s.setBrackets);
+  const updateBracket = useTeamStore((s) => s.updateBracket);
   const users = useUserStore((s) => s.users);
   const currentUserId = useUserStore((s) => s.currentUserId);
   const currentUser = users.find((u) => u.id === currentUserId);
@@ -70,6 +71,17 @@ export default function Schedule() {
   const [registerMatchId, setRegisterMatchId] = useState<string | null>(null);
   const [registerTeamId, setRegisterTeamId] = useState<string>("");
   const [registerLoading, setRegisterLoading] = useState(false);
+
+  // 拒绝报名弹窗
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectRegId, setRejectRegId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
+  // 录入比分弹窗
+  const [showScoreModal, setShowScoreModal] = useState(false);
+  const [scoreBracketId, setScoreBracketId] = useState<string | null>(null);
+  const [scorePro, setScorePro] = useState<string>("");
+  const [scoreCon, setScoreCon] = useState<string>("");
 
   // 抽签状态
   const [drawLoading, setDrawLoading] = useState(false);
@@ -268,6 +280,47 @@ export default function Schedule() {
       showToast("success", "对阵和场地已重新抽签！");
       setDrawLoading(false);
     }, 650);
+  };
+
+  const handleSubmitScore = () => {
+    if (!scoreBracketId) return;
+    const proScore = parseInt(scorePro, 10);
+    const conScore = parseInt(scoreCon, 10);
+    if (isNaN(proScore) || isNaN(conScore)) {
+      showToast("error", "请输入有效的比分数字");
+      return;
+    }
+    if (proScore === conScore) {
+      showToast("error", "比分不能相同，请分出胜负");
+      return;
+    }
+    const winner: "pro" | "con" = proScore > conScore ? "pro" : "con";
+    const bracket = currentBrackets.find((b) => b.id === scoreBracketId);
+    if (!bracket) return;
+    const winnerTeamId = winner === "pro" ? bracket.proTeamId : bracket.conTeamId;
+
+    // 更新当前场次比分
+    updateBracket(scoreBracketId, { proScore, conScore, winner });
+
+    // 如果是半决赛，自动把胜者推进到决赛
+    if (bracket.round === "半决赛") {
+      const semisList = currentBrackets.filter((b) => b.round === "半决赛");
+      const semiIndex = semisList.findIndex((b) => b.id === scoreBracketId);
+      const finalMatch = currentBrackets.find((b) => b.round === "决赛");
+      if (finalMatch) {
+        if (semiIndex === 0) {
+          updateBracket(finalMatch.id, { proTeamId: winnerTeamId });
+        } else if (semiIndex === 1) {
+          updateBracket(finalMatch.id, { conTeamId: winnerTeamId });
+        }
+      }
+    }
+
+    showToast("success", "比分已录入，对阵已同步更新");
+    setShowScoreModal(false);
+    setScoreBracketId(null);
+    setScorePro("");
+    setScoreCon("");
   };
 
   const currentBrackets = getBrackets();
@@ -748,8 +801,9 @@ export default function Schedule() {
                               size="sm"
                               variant="ghost"
                               onClick={() => {
-                                rejectRegistration(reg.id);
-                                showToast("info", `${user?.name} 的报名已拒绝`);
+                                setRejectRegId(reg.id);
+                                setRejectReason("");
+                                setShowRejectModal(true);
                               }}
                             >
                               <X className="w-4 h-4 mr-1" />
@@ -799,30 +853,49 @@ export default function Schedule() {
                 {semis.map((m, i) => {
                   const proT = getTeam(m.proTeamId);
                   const conT = getTeam(m.conTeamId);
+                  const hasBothTeams = !!m.proTeamId && !!m.conTeamId;
                   return (
                     <Card key={m.id} className="p-3">
                       <div className="flex items-center justify-between p-2 border-b border-cream-200 gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-2 h-2 rounded-full bg-victory flex-shrink-0" />
-                          <span className="text-sm font-medium truncate">
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${m.winner === "pro" ? "bg-success" : "bg-victory"}`} />
+                          <span className={`text-sm font-medium truncate ${m.winner === "pro" ? "text-success font-bold" : ""}`}>
                             {proT?.name || "待定"}
                           </span>
                         </div>
-                        <span className="font-mono font-bold text-victory flex-shrink-0 ml-2">
+                        <span className={`font-mono font-bold flex-shrink-0 ml-2 ${m.winner === "pro" ? "text-success text-lg" : "text-victory"}`}>
                           {m.proScore ?? "-"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between p-2 gap-2">
                         <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-2 h-2 rounded-full bg-primary-600 flex-shrink-0" />
-                          <span className="text-sm font-medium truncate">
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${m.winner === "con" ? "bg-success" : "bg-primary-600"}`} />
+                          <span className={`text-sm font-medium truncate ${m.winner === "con" ? "text-success font-bold" : ""}`}>
                             {conT?.name || "待定"}
                           </span>
                         </div>
-                        <span className="font-mono font-bold text-primary-700 flex-shrink-0 ml-2">
+                        <span className={`font-mono font-bold flex-shrink-0 ml-2 ${m.winner === "con" ? "text-success text-lg" : "text-primary-700"}`}>
                           {m.conScore ?? "-"}
                         </span>
                       </div>
+                      {currentUser?.role === "admin" && hasBothTeams && (
+                        <div className="pt-2 border-t border-cream-100">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full text-xs"
+                            onClick={() => {
+                              setScoreBracketId(m.id);
+                              setScorePro(m.proScore?.toString() || "");
+                              setScoreCon(m.conScore?.toString() || "");
+                              setShowScoreModal(true);
+                            }}
+                          >
+                            <Trophy className="w-3 h-3 mr-1" />
+                            {m.winner ? "修改比分" : "录入比分"}
+                          </Button>
+                        </div>
+                      )}
                     </Card>
                   );
                 })}
@@ -845,6 +918,7 @@ export default function Schedule() {
                 {finals.map((m) => {
                   const proT = getTeam(m.proTeamId);
                   const conT = getTeam(m.conTeamId);
+                  const hasBothTeams = !!m.proTeamId && !!m.conTeamId;
                   return (
                     <Card key={m.id} className="p-4 border-accent-300 shadow-md bg-gradient-to-br from-accent-50 to-white">
                       <div className="text-center mb-3">
@@ -852,17 +926,51 @@ export default function Schedule() {
                         <p className="text-xs font-semibold text-accent-600 mt-1">冠军争夺</p>
                       </div>
                       <div className="flex items-center justify-between p-2 border-b border-cream-200 gap-2">
-                        <span className="text-sm font-medium truncate">
-                          {proT?.name || "半决赛胜者1"}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${m.winner === "pro" ? "bg-success" : "bg-victory"}`} />
+                          <span className={`text-sm font-medium truncate ${m.winner === "pro" ? "text-success font-bold" : ""}`}>
+                            {proT?.name || "半决赛胜者1"}
+                          </span>
+                        </div>
+                        <span className={`font-mono font-bold flex-shrink-0 ml-2 ${m.winner === "pro" ? "text-success text-lg" : m.proScore != null ? "text-ink-700" : "text-ink-300"}`}>
+                          {m.proScore ?? "-"}
                         </span>
-                        <span className="font-mono font-bold text-ink-300 flex-shrink-0 ml-2">-</span>
                       </div>
                       <div className="flex items-center justify-between p-2 gap-2">
-                        <span className="text-sm font-medium truncate">
-                          {conT?.name || "半决赛胜者2"}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${m.winner === "con" ? "bg-success" : "bg-primary-600"}`} />
+                          <span className={`text-sm font-medium truncate ${m.winner === "con" ? "text-success font-bold" : ""}`}>
+                            {conT?.name || "半决赛胜者2"}
+                          </span>
+                        </div>
+                        <span className={`font-mono font-bold flex-shrink-0 ml-2 ${m.winner === "con" ? "text-success text-lg" : m.conScore != null ? "text-ink-700" : "text-ink-300"}`}>
+                          {m.conScore ?? "-"}
                         </span>
-                        <span className="font-mono font-bold text-ink-300 flex-shrink-0 ml-2">-</span>
                       </div>
+                      {currentUser?.role === "admin" && hasBothTeams && (
+                        <div className="pt-3 mt-2 border-t border-accent-200">
+                          <Button
+                            size="sm"
+                            className="w-full text-xs"
+                            onClick={() => {
+                              setScoreBracketId(m.id);
+                              setScorePro(m.proScore?.toString() || "");
+                              setScoreCon(m.conScore?.toString() || "");
+                              setShowScoreModal(true);
+                            }}
+                          >
+                            <Trophy className="w-3 h-3 mr-1" />
+                            {m.winner ? "修改比分" : "录入比分"}
+                          </Button>
+                        </div>
+                      )}
+                      {!hasBothTeams && (
+                        <div className="pt-3 mt-2 border-t border-accent-200">
+                          <p className="text-xs text-ink-500 text-center">
+                            半决赛结束后自动晋级
+                          </p>
+                        </div>
+                      )}
                     </Card>
                   );
                 })}
@@ -1152,6 +1260,137 @@ export default function Schedule() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* 录入比分弹窗 */}
+      <Modal
+        open={showScoreModal}
+        onClose={() => setShowScoreModal(false)}
+        title="录入比赛比分"
+        className="max-w-md"
+      >
+        {(() => {
+          const bm = currentBrackets.find((b) => b.id === scoreBracketId);
+          if (!bm) return null;
+          const proT = getTeam(bm.proTeamId);
+          const conT = getTeam(bm.conTeamId);
+          return (
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-cream-50 border border-cream-200 text-center">
+                <Badge variant="primary">{bm.round}</Badge>
+                <p className="font-serif font-semibold text-ink-800 mt-2">
+                  {proT?.name || "待定"} VS {conT?.name || "待定"}
+                </p>
+                <p className="text-xs text-ink-500 mt-1">
+                  {formatDate(bm.date)} · {bm.time} · {bm.venue}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-ink-700 mb-2 text-center">
+                    <span className="inline-block w-2 h-2 rounded-full bg-victory mr-1.5" />
+                    {proT?.name || "正方"}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={scorePro}
+                    onChange={(e) => setScorePro(e.target.value)}
+                    className="input text-center font-mono text-2xl font-bold"
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-ink-700 mb-2 text-center">
+                    <span className="inline-block w-2 h-2 rounded-full bg-primary-600 mr-1.5" />
+                    {conT?.name || "反方"}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={scoreCon}
+                    onChange={(e) => setScoreCon(e.target.value)}
+                    className="input text-center font-mono text-2xl font-bold"
+                    placeholder="0"
+                  />
+                </div>
+              </div>
+              {bm.round === "半决赛" && (
+                <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-blue-800">
+                    提交后胜方将自动晋级到决赛对阵表中。
+                  </p>
+                </div>
+              )}
+              <div className="flex gap-3 pt-2">
+                <Button
+                  variant="ghost"
+                  className="flex-1"
+                  onClick={() => setShowScoreModal(false)}
+                >
+                  取消
+                </Button>
+                <Button className="flex-1" onClick={handleSubmitScore}>
+                  <Trophy className="w-4 h-4 mr-1" />
+                  确认比分
+                </Button>
+              </div>
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* 拒绝报名原因弹窗 */}
+      <Modal
+        open={showRejectModal}
+        onClose={() => setShowRejectModal(false)}
+        title="拒绝报名"
+        className="max-w-md"
+      >
+        <div className="space-y-4">
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-amber-800">
+              请填写拒绝原因，选手将在「我的参赛卡」中看到。
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-ink-700 mb-2">拒绝原因</label>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              rows={4}
+              className="input resize-none"
+              placeholder="如：年级不符合要求、时间冲突、队伍人数已满等..."
+            />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <Button
+              variant="ghost"
+              className="flex-1"
+              onClick={() => setShowRejectModal(false)}
+            >
+              取消
+            </Button>
+            <Button
+              className="flex-1"
+              onClick={() => {
+                if (!rejectRegId) return;
+                const reg = registrations.find((r) => r.id === rejectRegId);
+                const user = reg ? users.find((u) => u.id === reg.userId) : undefined;
+                rejectRegistration(rejectRegId, rejectReason.trim() || "不符合报名要求");
+                showToast("info", `${user?.name || "该选手"} 的报名已拒绝`);
+                setShowRejectModal(false);
+                setRejectRegId(null);
+                setRejectReason("");
+              }}
+            >
+              <X className="w-4 h-4 mr-1" />
+              确认拒绝
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

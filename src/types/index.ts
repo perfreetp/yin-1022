@@ -92,6 +92,8 @@ export interface MatchRegistration {
   teamId?: string;
   status: RegistrationStatus;
   registeredAt: string;
+  reviewedAt?: string;
+  rejectReason?: string;
   notes?: string;
 }
 

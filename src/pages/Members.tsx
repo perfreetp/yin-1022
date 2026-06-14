@@ -14,23 +14,34 @@ import {
   CalendarDays,
   Star,
   Crown,
+  Ticket,
+  Clock,
+  MapPin,
+  Users,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  ChevronRight,
 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
 import { useUserStore } from "../store/useUserStore";
 import { useMatchStore } from "../store/useMatchStore";
-import { positionLabels, weekDays, dayPeriods, formatDate } from "../utils";
-import type { DebatePosition, User } from "../types";
+import { useTeamStore } from "../store/useTeamStore";
+import { positionLabels, weekDays, dayPeriods, formatDate, formatDateTime } from "../utils";
+import type { DebatePosition, User, MatchRegistration } from "../types";
 
-type TabType = "profile" | "ability" | "history";
+type TabType = "profile" | "ability" | "registrations" | "history";
 
 export default function Members() {
   const currentUser = useUserStore((s) => s.getCurrentUser());
   const updateUser = useUserStore((s) => s.updateUser);
   const matches = useMatchStore((s) => s.matches);
   const participants = useMatchStore((s) => s.participants);
+  const registrations = useMatchStore((s) => s.registrations);
   const getMatchesByUser = useMatchStore((s) => s.getMatchesByUser);
+  const getTeamById = useTeamStore((s) => s.getTeamById);
 
   const [activeTab, setActiveTab] = useState<TabType>("profile");
   const [isEditing, setIsEditing] = useState(false);
@@ -81,8 +92,25 @@ export default function Members() {
   const tabs = [
     { id: "profile" as TabType, label: "个人资料", icon: UserIcon },
     { id: "ability" as TabType, label: "辩论能力", icon: Target },
+    { id: "registrations" as TabType, label: "我的参赛", icon: Ticket },
     { id: "history" as TabType, label: "历史战绩", icon: Trophy },
   ];
+
+  // 我的报名记录 + 真实参赛场次
+  const myRegistrations = currentUser
+    ? registrations.filter((r) => r.userId === currentUser.id)
+    : [];
+
+  const getRegStatusInfo = (status: MatchRegistration["status"]) => {
+    switch (status) {
+      case "pending":
+        return { label: "待审核", variant: "warning" as const, icon: Clock };
+      case "approved":
+        return { label: "已通过", variant: "success" as const, icon: CheckCircle2 };
+      case "rejected":
+        return { label: "未通过", variant: "danger" as const, icon: XCircle };
+    }
+  };
 
   const userMatches = currentUser ? getMatchesByUser(currentUser.id) : [];
   const finishedMatches = userMatches.filter(
@@ -103,10 +131,17 @@ export default function Members() {
     return match.result.winner === side;
   };
 
-  const winRate =
-    currentUser.matchCount > 0
-      ? Math.round((currentUser.winCount / currentUser.matchCount) * 100)
-      : 0;
+  // 基于真实参赛记录计算统计
+  const realMatchCount = finishedMatches.length;
+  const realWinCount = finishedMatches.reduce((acc, m) => {
+    const won = isWinner(m, currentUser.id);
+    return acc + (won === true ? 1 : 0);
+  }, 0);
+  const realBestSpeakerCount = finishedMatches.filter(
+    (m) => m.result?.bestSpeakerId === currentUser.id
+  ).length;
+  const realWinRate =
+    realMatchCount > 0 ? Math.round((realWinCount / realMatchCount) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -186,10 +221,10 @@ export default function Members() {
           {/* Stats */}
           <div className="grid grid-cols-4 gap-3 mt-6 pt-6 border-t border-cream-200">
             {[
-              { label: "参赛场次", value: currentUser.matchCount, icon: Trophy, color: "text-primary-600 bg-primary-50" },
-              { label: "胜利场次", value: currentUser.winCount, icon: Medal, color: "text-success bg-green-50" },
-              { label: "最佳辩手", value: currentUser.bestSpeakerCount, icon: Star, color: "text-amber-600 bg-amber-50" },
-              { label: "胜率", value: `${winRate}%`, icon: Target, color: "text-victory bg-red-50" },
+              { label: "参赛场次", value: realMatchCount, icon: Trophy, color: "text-primary-600 bg-primary-50" },
+              { label: "胜利场次", value: realWinCount, icon: Medal, color: "text-success bg-green-50" },
+              { label: "最佳辩手", value: realBestSpeakerCount, icon: Star, color: "text-amber-600 bg-amber-50" },
+              { label: "胜率", value: `${realWinRate}%`, icon: Target, color: "text-victory bg-red-50" },
             ].map((stat) => (
               <div
                 key={stat.label}
@@ -443,6 +478,183 @@ export default function Members() {
                 }
               )}
             </div>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === "registrations" && (
+        <div className="space-y-6 opacity-0 animate-fade-in">
+          <Card className="p-6">
+            <h2 className="font-serif text-lg font-bold text-ink-800 mb-4">
+              我的参赛卡
+            </h2>
+            <p className="text-sm text-ink-500 mb-5">
+              查看你报名的所有比赛，包括报名状态、比赛信息、审核进度和拒绝原因。
+            </p>
+            {myRegistrations.length > 0 ? (
+              <div className="space-y-4">
+                {myRegistrations.map((reg) => {
+                  const match = matches.find((m) => m.id === reg.matchId);
+                  const team = reg.teamId ? getTeamById(reg.teamId) : undefined;
+                  const statusInfo = getRegStatusInfo(reg.status);
+                  if (!match) return null;
+                  const StatusIcon = statusInfo.icon;
+                  return (
+                    <div
+                      key={reg.id}
+                      className={`rounded-xl border overflow-hidden ${
+                        reg.status === "rejected"
+                          ? "border-red-200"
+                          : reg.status === "approved"
+                          ? "border-green-200"
+                          : "border-amber-200"
+                      }`}
+                    >
+                      {/* 头部色带 */}
+                      <div
+                        className={`h-2 ${
+                          reg.status === "rejected"
+                            ? "bg-gradient-to-r from-red-400 to-red-500"
+                            : reg.status === "approved"
+                            ? "bg-gradient-to-r from-green-400 to-green-500"
+                            : "bg-gradient-to-r from-amber-400 to-amber-500"
+                        }`}
+                      />
+                      <div className="p-5">
+                        <div className="flex items-start justify-between gap-4 mb-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-2">
+                              <h3 className="font-serif font-semibold text-ink-800">
+                                {match.title}
+                              </h3>
+                              <Badge variant={statusInfo.variant}>
+                                <StatusIcon className="w-3 h-3 mr-1 inline" />
+                                {statusInfo.label}
+                              </Badge>
+                              <Badge variant="default">{match.season}</Badge>
+                            </div>
+                            <p className="text-sm text-ink-600 line-clamp-1">
+                              <Ticket className="w-3.5 h-3.5 inline mr-1 text-accent-600" />
+                              {match.topic}
+                            </p>
+                          </div>
+                          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center flex-shrink-0 shadow-md">
+                            <Ticket className="w-6 h-6 text-white" />
+                          </div>
+                        </div>
+
+                        {/* 比赛信息 */}
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+                          <div className="p-3 rounded-lg bg-cream-50 border border-cream-200">
+                            <p className="text-[11px] text-ink-400 mb-1 flex items-center gap-1">
+                              <CalendarDays className="w-3 h-3" />
+                              比赛时间
+                            </p>
+                            <p className="text-sm font-medium text-ink-800">
+                              {formatDate(match.date)}
+                            </p>
+                            <p className="text-xs text-ink-500">{match.time}</p>
+                          </div>
+                          <div className="p-3 rounded-lg bg-cream-50 border border-cream-200">
+                            <p className="text-[11px] text-ink-400 mb-1 flex items-center gap-1">
+                              <MapPin className="w-3 h-3" />
+                              比赛地点
+                            </p>
+                            <p className="text-sm font-medium text-ink-800">
+                              {match.venue}
+                            </p>
+                          </div>
+                          <div className="p-3 rounded-lg bg-cream-50 border border-cream-200">
+                            <p className="text-[11px] text-ink-400 mb-1 flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              所属队伍
+                            </p>
+                            <p className="text-sm font-medium text-ink-800">
+                              {team?.name || "个人报名"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* 审核记录 */}
+                        <div className="border-t border-cream-200 pt-4">
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 text-xs">
+                              <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                              </div>
+                              <span className="text-ink-600">
+                                提交报名
+                                <span className="text-ink-400 ml-2">
+                                  {formatDateTime(reg.registeredAt)}
+                                </span>
+                              </span>
+                            </div>
+                            {reg.status !== "pending" && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <div
+                                  className={`w-6 h-6 rounded-full flex items-center justify-center ${
+                                    reg.status === "approved"
+                                      ? "bg-green-100"
+                                      : "bg-red-100"
+                                  }`}
+                                >
+                                  {reg.status === "approved" ? (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                                  ) : (
+                                    <XCircle className="w-3.5 h-3.5 text-red-600" />
+                                  )}
+                                </div>
+                                <span className="text-ink-600">
+                                  {reg.status === "approved" ? "审核通过" : "审核未通过"}
+                                  {reg.reviewedAt && (
+                                    <span className="text-ink-400 ml-2">
+                                      {formatDateTime(reg.reviewedAt)}
+                                    </span>
+                                  )}
+                                </span>
+                              </div>
+                            )}
+                            {reg.status === "pending" && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center">
+                                  <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                                </div>
+                                <span className="text-ink-600">
+                                  等待管理员审核中...
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 拒绝原因 */}
+                          {reg.status === "rejected" && reg.rejectReason && (
+                            <div className="mt-4 p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
+                              <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-xs font-semibold text-red-700 mb-1">
+                                  拒绝原因
+                                </p>
+                                <p className="text-sm text-red-800 leading-relaxed">
+                                  {reg.rejectReason}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <Ticket className="w-16 h-16 mx-auto text-ink-200 mb-4" />
+                <p className="text-ink-400">还没有报名记录</p>
+                <p className="text-sm text-ink-300 mt-1">
+                  去赛程页看看有哪些可以报名的比赛吧~
+                </p>
+              </div>
+            )}
           </Card>
         </div>
       )}

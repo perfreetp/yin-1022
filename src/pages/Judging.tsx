@@ -25,7 +25,7 @@ import {
   positionLabels,
   cn,
 } from "../utils";
-import type { JudgingTask, Score, MatchParticipant } from "../types";
+import type { JudgingTask, Score, MatchParticipant, Match } from "../types";
 
 type ScoreCategory = keyof typeof scoreCategoryLabels;
 
@@ -36,6 +36,7 @@ export default function Judging() {
   const matches = useMatchStore((s) => s.matches);
   const participants = useMatchStore((s) => s.participants);
   const submitJudging = useMatchStore((s) => s.submitJudging);
+  const saveDraftJudging = useMatchStore((s) => s.saveDraftJudging);
   const allTasks = useMatchStore((s) => s.judgingTasks);
 
   // 任务过滤：评委只看分配给自己的；admin 看全部
@@ -228,9 +229,50 @@ export default function Judging() {
     setTimeout(() => setSelectedTask(nextPending || tasks[0] || null), 300);
   };
 
+  const handleSaveDraft = () => {
+    if (!selectedTask) return;
+    const allScores: Score[] = [
+      ...categories.map((cat) => ({
+        id: `sp-${selectedTask.id}-${proTeamId}-${cat}`,
+        taskId: selectedTask.id,
+        teamId: proTeamId,
+        category: cat,
+        score: proScores[cat] || 0,
+        note: proNotes[cat],
+      })),
+      ...categories.map((cat) => ({
+        id: `sc-${selectedTask.id}-${conTeamId}-${cat}`,
+        taskId: selectedTask.id,
+        teamId: conTeamId,
+        category: cat,
+        score: conScores[cat] || 0,
+        note: conNotes[cat],
+      })),
+    ];
+    saveDraftJudging(selectedTask.id, allScores, comment, bestSpeakerId);
+    showToast("info", "草稿已保存，可随时回来继续修改");
+  };
+
   const pendingTasks = tasks.filter((t) => t.status !== "completed");
   const completedTasks = tasks.filter((t) => t.status === "completed");
   const isCompleted = selectedTask?.status === "completed";
+
+  // 管理员视角：按比赛聚合评委完成进度
+  const matchProgress = useMemo(() => {
+    if (currentUser?.role !== "admin") return [];
+    const map = new Map<string, { match: Match | undefined; tasks: JudgingTask[]; completed: number }>();
+    allTasks.forEach((t) => {
+      const item = map.get(t.matchId) || {
+        match: matches.find((m) => m.id === t.matchId),
+        tasks: [],
+        completed: 0,
+      };
+      item.tasks.push(t);
+      if (t.status === "completed") item.completed++;
+      map.set(t.matchId, item);
+    });
+    return Array.from(map.values());
+  }, [allTasks, matches, currentUser?.role]);
 
   return (
     <div className="space-y-6">
@@ -270,6 +312,84 @@ export default function Judging() {
           </div>
         </div>
       </div>
+
+      {/* 管理员：评委完成进度面板 */}
+      {currentUser?.role === "admin" && matchProgress.length > 0 && (
+        <Card className="p-5 opacity-0 animate-fade-in-up animate-delay-100">
+          <h2 className="font-serif font-bold text-ink-800 mb-4 flex items-center gap-2">
+            <Gavel className="w-5 h-5 text-primary-600" />
+            评委完成进度
+          </h2>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {matchProgress.map(({ match, tasks, completed }) => {
+              const total = tasks.length;
+              const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+              return (
+                <div
+                  key={match?.id || Math.random()}
+                  className="p-4 rounded-xl bg-cream-50 border border-cream-200"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-ink-800 line-clamp-1">
+                      {match?.title || "未知比赛"}
+                    </p>
+                    <Badge
+                      variant={
+                        completed === total
+                          ? "success"
+                          : completed > 0
+                          ? "warning"
+                          : "default"
+                      }
+                    >
+                      {completed}/{total}
+                    </Badge>
+                  </div>
+                  <div className="h-2 rounded-full bg-cream-200 overflow-hidden mb-2">
+                    <div
+                      className={cn(
+                        "h-full transition-all duration-300",
+                        completed === total
+                          ? "bg-success"
+                          : completed > 0
+                          ? "bg-amber-500"
+                          : "bg-ink-300"
+                      )}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-ink-500">
+                    {match ? formatDate(match.date) : ""} · {match?.venue || ""}
+                  </p>
+                  <div className="flex flex-wrap gap-1 mt-2">
+                    {tasks.map((t) => {
+                      const judge = users.find((u) => u.id === t.judgeId);
+                      return (
+                        <Badge
+                          key={t.id}
+                          variant={
+                            t.status === "completed"
+                              ? "success"
+                              : t.status === "in_progress"
+                              ? "warning"
+                              : "default"
+                          }
+                          className="!text-[10px] !px-2 !py-0.5"
+                        >
+                          {judge?.name || "未知评委"}
+                          {t.status === "completed" && (
+                            <CheckCircle className="w-2.5 h-2.5 ml-1 inline" />
+                          )}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Task List */}
@@ -323,6 +443,12 @@ export default function Judging() {
                       <p className="text-xs text-ink-400 mt-1">
                         {m && formatDate(m.date)} · {m?.venue}
                       </p>
+                      {currentUser?.role === "admin" && (
+                        <p className="text-[11px] text-primary-600 mt-1.5 flex items-center gap-1">
+                          <Users className="w-3 h-3" />
+                          评委：{users.find((u) => u.id === task.judgeId)?.name || "未知"}
+                        </p>
+                      )}
                       {task.status === "completed" && task.bestSpeakerId && (
                         <p className="text-[11px] text-accent-600 mt-1.5 flex items-center gap-1">
                           <Award className="w-3 h-3" />
@@ -708,7 +834,8 @@ export default function Judging() {
 
                 {!isCompleted ? (
                   <div className="flex gap-3 mt-6 pt-5 border-t border-cream-200">
-                    <Button variant="ghost" className="flex-1">
+                    <Button variant="ghost" className="flex-1" onClick={handleSaveDraft}>
+                      <Clock className="w-4 h-4 mr-1.5" />
                       保存草稿
                     </Button>
                     <Button

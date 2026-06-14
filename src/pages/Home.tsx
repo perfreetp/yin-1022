@@ -16,10 +16,14 @@ import {
   ArrowRight,
   Megaphone,
   Flame,
+  AlertCircle,
+  Check,
+  X,
 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
+import Modal from "../components/ui/Modal";
 import { useMatchStore } from "../store/useMatchStore";
 import { useTeamStore } from "../store/useTeamStore";
 import { useResourceStore } from "../store/useResourceStore";
@@ -29,7 +33,9 @@ import {
   formatDate,
   formatRelativeTime,
   generateId,
+  cn,
 } from "../utils";
+import type { Match } from "../types";
 
 export default function Home() {
   const matches = useMatchStore((s) => s.matches);
@@ -44,6 +50,21 @@ export default function Home() {
   const [commentInput, setCommentInput] = useState<Record<string, string>>({});
   const [registeredMatches, setRegisteredMatches] = useState<Set<string>>(new Set());
 
+  const [toast, setToast] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+  const [errorModal, setErrorModal] = useState<{
+    title: string;
+    message: string;
+    conflicts?: Match[];
+  } | null>(null);
+
+  const showToast = (type: "success" | "error" | "info", message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 3000);
+  };
+
   const upcomingMatches = [...matches]
     .filter((m) => m.status !== "finished" && m.status !== "cancelled")
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
@@ -55,6 +76,14 @@ export default function Home() {
     const result = registerMatch(matchId, currentUserId, currentUser?.grade || "大一");
     if (result.ok) {
       setRegisteredMatches((prev) => new Set([...prev, matchId]));
+      showToast("success", "报名成功！等待审核");
+    } else {
+      const match = matches.find((m) => m.id === matchId);
+      setErrorModal({
+        title: match ? `无法报名「${match.title}」` : "无法报名",
+        message: result.error || "报名失败，请稍后再试",
+        conflicts: result.conflictMatches,
+      });
     }
   };
 
@@ -446,6 +475,62 @@ export default function Home() {
           </Card>
         </div>
       </div>
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className={cn(
+            "fixed top-20 right-6 z-[100] px-5 py-3 rounded-xl shadow-lg animate-fade-in-up flex items-center gap-2",
+            toast.type === "success" && "bg-success text-white",
+            toast.type === "error" && "bg-victory text-white",
+            toast.type === "info" && "bg-primary-600 text-white"
+          )}
+        >
+          {toast.type === "success" && <Check className="w-4 h-4" />}
+          {toast.type === "error" && <AlertCircle className="w-4 h-4" />}
+          {toast.type === "info" && <AlertCircle className="w-4 h-4" />}
+          <span className="text-sm font-medium">{toast.message}</span>
+        </div>
+      )}
+
+      {/* 错误提示弹窗 */}
+      <Modal
+        open={!!errorModal}
+        onClose={() => setErrorModal(null)}
+        title={errorModal?.title || "提示"}
+      >
+        {errorModal && (
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl bg-red-50 border border-red-200 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-victory flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-800 leading-relaxed">{errorModal.message}</p>
+            </div>
+            {errorModal.conflicts && errorModal.conflicts.length > 0 && (
+              <div>
+                <p className="text-sm font-semibold text-ink-700 mb-2">冲突场次：</p>
+                <div className="space-y-2">
+                  {errorModal.conflicts.map((cm) => (
+                    <div
+                      key={cm.id}
+                      className="p-3 rounded-lg bg-cream-50 border border-cream-200"
+                    >
+                      <p className="text-sm font-medium text-ink-800">{cm.title}</p>
+                      <p className="text-xs text-ink-500 mt-1">
+                        {formatDate(cm.date)} · {cm.time} · {cm.venue}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => setErrorModal(null)}>
+                我知道了
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

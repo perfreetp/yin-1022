@@ -20,6 +20,7 @@ interface TeamState {
   getTeamMembers: (teamId: string) => TeamMember[];
   getTeamsByUser: (userId: string) => Team[];
   setBrackets: (brackets: BracketMatch[]) => void;
+  updateBracket: (id: string, data: Partial<BracketMatch>) => void;
 }
 
 export const useTeamStore = create<TeamState>()(
@@ -91,6 +92,12 @@ export const useTeamStore = create<TeamState>()(
         return get().teams.filter((t) => memberTeamIds.includes(t.id));
       },
       setBrackets: (brackets) => set({ brackets }),
+      updateBracket: (id, data) =>
+        set({
+          brackets: get().brackets.map((b) =>
+            b.id === id ? { ...b, ...data } : b
+          ),
+        }),
     }),
     {
       name: "debate-team-storage",
