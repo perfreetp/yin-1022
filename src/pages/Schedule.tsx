@@ -21,6 +21,7 @@ import {
   UserPlus,
   Loader2,
   Map as MapIcon,
+  Shield,
 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
@@ -44,6 +45,7 @@ type ViewType = "list" | "calendar" | "registration" | "draw";
 export default function Schedule() {
   const matches = useMatchStore((s) => s.matches);
   const registrations = useMatchStore((s) => s.registrations);
+  const updateMatch = useMatchStore((s) => s.updateMatch);
   const approveRegistration = useMatchStore((s) => s.approveRegistration);
   const rejectRegistration = useMatchStore((s) => s.rejectRegistration);
   const registerMatch = useMatchStore((s) => s.registerMatch);
@@ -201,6 +203,7 @@ export default function Schedule() {
       {
         id: generateId("bm"),
         round: "半决赛",
+        matchId: "m001",
         proTeamId: "t001",
         conTeamId: "t002",
         venue: "学术报告厅A301",
@@ -210,6 +213,7 @@ export default function Schedule() {
       {
         id: generateId("bm"),
         round: "半决赛",
+        matchId: "m002",
         proTeamId: "t003",
         conTeamId: "t004",
         venue: "学术报告厅A301",
@@ -219,6 +223,7 @@ export default function Schedule() {
       {
         id: generateId("bm"),
         round: "决赛",
+        matchId: "m004",
         proTeamId: null,
         conTeamId: null,
         venue: "大礼堂",
@@ -250,6 +255,7 @@ export default function Schedule() {
         {
           id: generateId("bm"),
           round: "半决赛",
+          matchId: "m001",
           proTeamId: shuffled[0] || null,
           conTeamId: shuffled[1] || null,
           venue: semiVenue1,
@@ -259,6 +265,7 @@ export default function Schedule() {
         {
           id: generateId("bm"),
           round: "半决赛",
+          matchId: "m002",
           proTeamId: shuffled[2] || null,
           conTeamId: shuffled[3] || null,
           venue: semiVenue2,
@@ -268,6 +275,7 @@ export default function Schedule() {
         {
           id: generateId("bm"),
           round: "决赛",
+          matchId: "m004",
           proTeamId: null,
           conTeamId: null,
           venue: "大礼堂",
@@ -299,19 +307,46 @@ export default function Schedule() {
     if (!bracket) return;
     const winnerTeamId = winner === "pro" ? bracket.proTeamId : bracket.conTeamId;
 
-    // 更新当前场次比分
     updateBracket(scoreBracketId, { proScore, conScore, winner });
 
-    // 如果是半决赛，自动把胜者推进到决赛
+    if (bracket.matchId) {
+      updateMatch(bracket.matchId, {
+        proTeamId: bracket.proTeamId ?? undefined,
+        conTeamId: bracket.conTeamId ?? undefined,
+        date: bracket.date,
+        time: bracket.time,
+        venue: bracket.venue,
+        result: {
+          winner,
+          proScore,
+          conScore,
+          bestSpeakerId: "",
+          summary: "",
+        },
+      });
+    }
+
     if (bracket.round === "半决赛") {
       const semisList = currentBrackets.filter((b) => b.round === "半决赛");
       const semiIndex = semisList.findIndex((b) => b.id === scoreBracketId);
       const finalMatch = currentBrackets.find((b) => b.round === "决赛");
       if (finalMatch) {
+        const updated = { ...finalMatch };
         if (semiIndex === 0) {
+          updated.proTeamId = winnerTeamId;
           updateBracket(finalMatch.id, { proTeamId: winnerTeamId });
         } else if (semiIndex === 1) {
+          updated.conTeamId = winnerTeamId;
           updateBracket(finalMatch.id, { conTeamId: winnerTeamId });
+        }
+        if (updated.matchId) {
+          updateMatch(updated.matchId, {
+            proTeamId: updated.proTeamId ?? undefined,
+            conTeamId: updated.conTeamId ?? undefined,
+            date: updated.date,
+            time: updated.time,
+            venue: updated.venue,
+          });
         }
       }
     }
@@ -501,10 +536,14 @@ export default function Schedule() {
                       </h3>
                       <p className="text-sm text-ink-600 mb-3">
                         <span className="text-victory font-medium">正方：</span>
-                        {match.proDescription}
+                        {match.proTeamId
+                          ? teams.find((t) => t.id === match.proTeamId)?.name || match.proDescription
+                          : match.proDescription}
                         <br />
                         <span className="text-primary-700 font-medium">反方：</span>
-                        {match.conDescription}
+                        {match.conTeamId
+                          ? teams.find((t) => t.id === match.conTeamId)?.name || match.conDescription
+                          : match.conDescription}
                       </p>
                       <div className="flex flex-wrap gap-4 text-xs text-ink-500">
                         <span className="flex items-center gap-1">
@@ -1181,10 +1220,22 @@ export default function Schedule() {
             <div className="grid sm:grid-cols-2 gap-3">
               <div className="p-4 rounded-xl bg-victory/5 border border-victory/20">
                 <p className="text-xs font-semibold text-victory mb-1">正方立场</p>
+                {selectedMatch.proTeamId && (
+                  <p className="text-sm font-bold text-ink-800 mb-1 flex items-center gap-1.5">
+                    <Shield className="w-3.5 h-3.5 text-victory" />
+                    {teams.find((t) => t.id === selectedMatch.proTeamId)?.name}
+                  </p>
+                )}
                 <p className="text-sm text-ink-800">{selectedMatch.proDescription}</p>
               </div>
               <div className="p-4 rounded-xl bg-primary-600/5 border border-primary-600/20">
                 <p className="text-xs font-semibold text-primary-700 mb-1">反方立场</p>
+                {selectedMatch.conTeamId && (
+                  <p className="text-sm font-bold text-ink-800 mb-1 flex items-center gap-1.5">
+                    <Shield className="w-3.5 h-3.5 text-primary-700" />
+                    {teams.find((t) => t.id === selectedMatch.conTeamId)?.name}
+                  </p>
+                )}
                 <p className="text-sm text-ink-800">{selectedMatch.conDescription}</p>
               </div>
             </div>

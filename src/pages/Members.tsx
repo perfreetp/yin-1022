@@ -22,15 +22,25 @@ import {
   XCircle,
   AlertCircle,
   ChevronRight,
+  Swords,
+  ClipboardList,
+  FileText,
+  Shield,
+  ShieldAlert,
+  Sparkles,
+  ArrowRight,
+  Quote,
+  Check,
 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
+import Modal from "../components/ui/Modal";
 import { useUserStore } from "../store/useUserStore";
 import { useMatchStore } from "../store/useMatchStore";
 import { useTeamStore } from "../store/useTeamStore";
 import { positionLabels, weekDays, dayPeriods, formatDate, formatDateTime } from "../utils";
-import type { DebatePosition, User, MatchRegistration } from "../types";
+import type { DebatePosition, User, MatchRegistration, Match } from "../types";
 
 type TabType = "profile" | "ability" | "registrations" | "history";
 
@@ -42,10 +52,13 @@ export default function Members() {
   const registrations = useMatchStore((s) => s.registrations);
   const getMatchesByUser = useMatchStore((s) => s.getMatchesByUser);
   const getTeamById = useTeamStore((s) => s.getTeamById);
+  const teams = useTeamStore((s) => s.teams);
+  const users = useUserStore((s) => s.users);
 
   const [activeTab, setActiveTab] = useState<TabType>("profile");
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState<Partial<User>>(currentUser || {});
+  const [showSeasonResult, setShowSeasonResult] = useState(false);
 
   if (!currentUser) return null;
 
@@ -142,6 +155,39 @@ export default function Members() {
   ).length;
   const realWinRate =
     realMatchCount > 0 ? Math.round((realWinCount / realMatchCount) * 100) : 0;
+
+  const finalMatch = matches.find((m) => m.id === "m004");
+  const semiMatches = matches.filter((m) => m.id === "m001" || m.id === "m002");
+  const hasSeasonResult = Boolean(finalMatch?.result);
+
+  const seasonData = (() => {
+    if (!finalMatch?.result) return null;
+    const winner = finalMatch.result.winner;
+    const championTeamId = winner === "pro" ? finalMatch.proTeamId : finalMatch.conTeamId;
+    const runnerUpTeamId = winner === "pro" ? finalMatch.conTeamId : finalMatch.proTeamId;
+    const champion = teams.find((t) => t.id === championTeamId);
+    const runnerUp = teams.find((t) => t.id === runnerUpTeamId);
+    const bestSpeaker = users.find((u) => u.id === finalMatch.result!.bestSpeakerId);
+
+    const matchList = [...semiMatches, finalMatch].filter(Boolean) as Match[];
+
+    const summaries: string[] = [];
+    if (finalMatch.result.summary) summaries.push(finalMatch.result.summary);
+    semiMatches.forEach((m) => m.result?.summary && summaries.push(m.result.summary));
+    const overallSummary =
+      summaries.length > 0
+        ? summaries.join(" ")
+        : "感谢所有参赛队伍、评委和工作人员的精彩呈现！";
+
+    return {
+      champion,
+      runnerUp,
+      bestSpeaker,
+      matchList,
+      overallSummary,
+      finalMatch,
+    };
+  })();
 
   return (
     <div className="space-y-6">
@@ -244,6 +290,37 @@ export default function Members() {
           </div>
         </div>
       </Card>
+
+      {hasSeasonResult && seasonData && (
+        <Card className="p-0 overflow-hidden opacity-0 animate-fade-in-up animate-delay-100 !bg-gradient-to-br !from-amber-50 via-white !to-primary-500/5 !border-amber-200/70">
+          <button
+            onClick={() => setShowSeasonResult(true)}
+            className="w-full text-left p-4 md:p-5 flex flex-col sm:flex-row items-center gap-4 transition-all hover:bg-white/40"
+          >
+            <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-amber-400 via-amber-500 to-orange-500 flex items-center justify-center flex-shrink-0 shadow-md">
+              <Trophy className="w-7 h-7 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <Badge variant="accent" className="!bg-amber-500 !text-xs">
+                  <Sparkles className="w-3 h-3 mr-1" />
+                  2025春季赛结果已出炉
+                </Badge>
+              </div>
+              <p className="font-serif font-semibold text-ink-800 text-sm">
+                {seasonData.champion?.name || "冠军队"}夺冠
+                {seasonData.bestSpeaker && seasonData.bestSpeaker.id === currentUser.id && (
+                  <span className="text-accent-600 ml-2 flex items-center gap-1 inline-flex">
+                    <Award className="w-3.5 h-3.5" />
+                    你获得最佳辩手！
+                  </span>
+                )}
+              </p>
+            </div>
+            <ArrowRight className="w-5 h-5 text-ink-400 flex-shrink-0" />
+          </button>
+        </Card>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 p-1 bg-white rounded-xl border border-cream-300 shadow-card w-fit opacity-0 animate-fade-in-up animate-delay-100">
@@ -575,6 +652,76 @@ export default function Members() {
                           </div>
                         </div>
 
+                        {reg.status === "approved" && (() => {
+                          const participant = participants.find(
+                            (p) => p.matchId === reg.matchId && p.teamId === reg.teamId
+                          );
+                          const mySpeaker = participant?.speakers.find(
+                            (s) => s.userId === currentUser?.id
+                          );
+                          const sideLabel =
+                            match.proTeamId === reg.teamId
+                              ? "正方"
+                              : match.conTeamId === reg.teamId
+                              ? "反方"
+                              : participant?.side === "pro"
+                              ? "正方"
+                              : participant?.side === "con"
+                              ? "反方"
+                              : "待定";
+                          const sideBadge =
+                            sideLabel === "正方" ? "success" : sideLabel === "反方" ? "primary" : "default";
+                          return (
+                            <div className="space-y-3 mb-4">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="p-3 rounded-xl border-2 border-victory/20 bg-victory/5">
+                                  <p className="text-[11px] text-ink-400 mb-1.5 flex items-center gap-1">
+                                    <Swords className="w-3 h-3" />
+                                    持方安排
+                                  </p>
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant={sideBadge as any}>
+                                      <Shield className="w-3 h-3 mr-1 inline" />
+                                      {sideLabel}
+                                    </Badge>
+                                    {mySpeaker && (
+                                      <Badge variant="accent">
+                                        {positionLabels[mySpeaker.position] || "待安排"}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="p-3 rounded-xl border-2 border-primary-500/20 bg-primary-500/5">
+                                  <p className="text-[11px] text-ink-400 mb-1.5 flex items-center gap-1">
+                                    <ClipboardList className="w-3 h-3" />
+                                    赛前待办
+                                  </p>
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-amber-500" />
+                                      <span className="text-ink-700">
+                                        赛前 30 分钟到场签到
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <FileText className="w-3.5 h-3.5 text-amber-500" />
+                                      <span className="text-ink-700">
+                                        提交立论稿/论据清单
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                                      <span className="text-ink-700">
+                                        统一队服，提前熟悉规则
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {/* 审核记录 */}
                         <div className="border-t border-cream-200 pt-4">
                           <div className="space-y-2">
@@ -729,6 +876,137 @@ export default function Members() {
             )}
           </Card>
         </div>
+      )}
+
+      {showSeasonResult && seasonData && (
+        <Modal
+          open={showSeasonResult}
+          onClose={() => setShowSeasonResult(false)}
+          title="2025春季辩论赛 · 赛季总结"
+          className="!max-w-4xl"
+        >
+          <div className="space-y-6">
+            <div className="relative overflow-hidden rounded-2xl p-8 md:p-10 text-center bg-gradient-to-br from-amber-400 via-orange-500 to-amber-600 text-white">
+              <div className="absolute inset-0 bg-grain-overlay opacity-30" />
+              <div className="relative z-10">
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/20 backdrop-blur-sm text-xs font-medium mb-4">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  2025春季赛 · 圆满落幕
+                </div>
+                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                  <Crown className="w-10 h-10" />
+                </div>
+                <h2 className="font-serif text-3xl md:text-4xl font-bold mb-2">
+                  {seasonData.champion?.name || "冠军队伍"}
+                </h2>
+                <p className="text-white/90">
+                  {seasonData.champion?.description || "恭喜获得冠军！"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-gray-100 to-white border-2 border-gray-200 text-center">
+                <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-gray-200 flex items-center justify-center">
+                  <span className="text-xl font-bold text-gray-500">2</span>
+                </div>
+                <p className="text-xs text-gray-500 mb-1">亚军</p>
+                <p className="font-serif font-bold text-lg text-ink-800">
+                  {seasonData.runnerUp?.name || "亚军队"}
+                </p>
+              </div>
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-amber-50 to-white border-2 border-amber-300 text-center">
+                <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-amber-100 flex items-center justify-center">
+                  <Trophy className="w-6 h-6 text-amber-600" />
+                </div>
+                <p className="text-xs text-amber-600 mb-1">冠军</p>
+                <p className="font-serif font-bold text-lg text-ink-800">
+                  {seasonData.champion?.name || "冠军队"}
+                </p>
+              </div>
+              <div className="p-5 rounded-2xl bg-gradient-to-br from-accent-50 to-white border-2 border-accent-300 text-center">
+                <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-accent-100 flex items-center justify-center">
+                  <Award className="w-6 h-6 text-accent-600" />
+                </div>
+                <p className="text-xs text-accent-600 mb-1">全程最佳辩手</p>
+                <p className="font-serif font-bold text-lg text-ink-800">
+                  {seasonData.bestSpeaker?.name || "待定"}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="font-serif font-bold text-lg text-ink-800 mb-3 flex items-center gap-2">
+                <Swords className="w-5 h-5 text-primary-600" />
+                淘汰赛赛程与比分
+              </h3>
+              <div className="space-y-2">
+                {seasonData.matchList.map((m) => (
+                  <div
+                    key={m.id}
+                    className="p-4 rounded-xl border border-cream-200 bg-cream-50 flex flex-col sm:flex-row sm:items-center gap-3 justify-between"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge variant={m.round === "决赛" ? "accent" : "primary"}>
+                          {m.round}
+                        </Badge>
+                        <span className="text-xs text-ink-400">
+                          {formatDate(m.date)} · {m.venue}
+                        </span>
+                      </div>
+                      <p className="text-sm text-ink-600 line-clamp-1">{m.title}</p>
+                    </div>
+                    {m.result ? (
+                      <div className="flex items-center gap-3 flex-shrink-0">
+                        <div className="text-center">
+                          <p className="text-[10px] text-ink-400">正方</p>
+                          <p
+                            className={`font-mono font-bold text-xl ${
+                              m.result.winner === "pro" ? "text-victory" : "text-ink-600"
+                            }`}
+                          >
+                            {m.result.proScore}
+                          </p>
+                        </div>
+                        <div className="text-ink-300 font-mono">VS</div>
+                        <div className="text-center">
+                          <p className="text-[10px] text-ink-400">反方</p>
+                          <p
+                            className={`font-mono font-bold text-xl ${
+                              m.result.winner === "con" ? "text-primary-700" : "text-ink-600"
+                            }`}
+                          >
+                            {m.result.conScore}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <Badge variant="default">待进行</Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-primary-500/5 via-white to-primary-500/5 border border-primary-300/50">
+              <p className="text-xs text-primary-700 font-semibold mb-2 flex items-center gap-1.5">
+                <Quote className="w-3.5 h-3.5" />
+                赛后总结
+              </p>
+              <p className="text-sm text-ink-700 leading-relaxed">
+                {seasonData.overallSummary}
+              </p>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <Button variant="primary" onClick={() => setShowSeasonResult(false)}>
+                <Check className="w-4 h-4 mr-1.5" />
+                太棒了！
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

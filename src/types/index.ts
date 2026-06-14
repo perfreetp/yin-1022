@@ -75,6 +75,8 @@ export interface Match {
   result?: MatchResult;
   maxTeams: number;
   registeredCount: number;
+  proTeamId?: string;
+  conTeamId?: string;
 }
 
 export interface MatchResult {
@@ -213,6 +215,7 @@ export interface CalendarEvent {
 export interface BracketMatch {
   id: string;
   round: string;
+  matchId?: string;
   proTeamId: string | null;
   conTeamId: string | null;
   venue: string;

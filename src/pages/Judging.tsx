@@ -12,10 +12,13 @@ import {
   ThumbsUp,
   AlertCircle,
   Eye,
+  FileCheck2,
+  Sparkles,
 } from "lucide-react";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Badge from "../components/ui/Badge";
+import Modal from "../components/ui/Modal";
 import { useMatchStore } from "../store/useMatchStore";
 import { useUserStore } from "../store/useUserStore";
 import {
@@ -37,9 +40,9 @@ export default function Judging() {
   const participants = useMatchStore((s) => s.participants);
   const submitJudging = useMatchStore((s) => s.submitJudging);
   const saveDraftJudging = useMatchStore((s) => s.saveDraftJudging);
+  const updateMatch = useMatchStore((s) => s.updateMatch);
   const allTasks = useMatchStore((s) => s.judgingTasks);
 
-  // 任务过滤：评委只看分配给自己的；admin 看全部
   const tasks = useMemo(() => {
     if (currentUser?.role === "admin") return allTasks;
     return allTasks.filter((t) => t.judgeId === currentUserId);
@@ -57,6 +60,13 @@ export default function Judging() {
   const [peerReviews, setPeerReviews] = useState<Record<string, number>>({});
   const [peerComment, setPeerComment] = useState("");
   const [toast, setToast] = useState<{ type: "success" | "info"; message: string } | null>(null);
+
+  const [showFinalizeModal, setShowFinalizeModal] = useState(false);
+  const [finalizeMatchId, setFinalizeMatchId] = useState<string | null>(null);
+  const [finalProScore, setFinalProScore] = useState<string>("");
+  const [finalConScore, setFinalConScore] = useState<string>("");
+  const [finalBestSpeakerId, setFinalBestSpeakerId] = useState("");
+  const [finalSummary, setFinalSummary] = useState("");
 
   const showToast = (type: "success" | "info", message: string) => {
     setToast({ type, message });
@@ -253,6 +263,95 @@ export default function Judging() {
     showToast("info", "草稿已保存，可随时回来继续修改");
   };
 
+  const handleOpenFinalize = (matchId: string) => {
+    const matchTasks = allTasks.filter(
+      (t) => t.matchId === matchId && t.status === "completed"
+    );
+    if (matchTasks.length === 0) {
+      showToast("info", "当前比赛还没有完成的评审，暂无法汇总");
+      return;
+    }
+
+    let sumPro = 0;
+    let sumCon = 0;
+    const bestSpeakerVotes: Record<string, number> = {};
+    const comments: string[] = [];
+
+    matchTasks.forEach((t) => {
+      let pro = 0;
+      let con = 0;
+      t.scores.forEach((s) => {
+        const catLabel = scoreCategoryLabels[s.category as ScoreCategory];
+        const weight = catLabel?.weight ?? 1;
+        if (s.teamId === "pro" || s.teamId === proTeamId) pro += s.score * weight;
+        else if (s.teamId === "con" || s.teamId === conTeamId) con += s.score * weight;
+      });
+      if (pro === 0 && con === 0) {
+        const half = Math.floor(t.scores.length / 2);
+        t.scores.forEach((s, idx) => {
+          const weight = scoreCategoryLabels[s.category as ScoreCategory]?.weight ?? 1;
+          if (idx < half) pro += s.score * weight;
+          else con += s.score * weight;
+        });
+      }
+      sumPro += pro;
+      sumCon += con;
+      if (t.bestSpeakerId) {
+        bestSpeakerVotes[t.bestSpeakerId] = (bestSpeakerVotes[t.bestSpeakerId] || 0) + 1;
+      }
+      if (t.comment && t.comment.trim().length > 0) {
+        comments.push(t.comment.trim().slice(0, 120));
+      }
+    });
+
+    const avgPro = Math.round(sumPro / matchTasks.length);
+    const avgCon = Math.round(sumCon / matchTasks.length);
+
+    let topSpeaker = "";
+    let topSpeakerVotes = 0;
+    Object.entries(bestSpeakerVotes).forEach(([uid, v]) => {
+      if (v > topSpeakerVotes) {
+        topSpeakerVotes = v;
+        topSpeaker = uid;
+      }
+    });
+
+    const summary =
+      comments.length > 0
+        ? `评委综合意见：${comments.join("；")}`
+        : `本场共收到 ${matchTasks.length} 位评委的评分`;
+
+    setFinalizeMatchId(matchId);
+    setFinalProScore(String(avgPro));
+    setFinalConScore(String(avgCon));
+    setFinalBestSpeakerId(topSpeaker);
+    setFinalSummary(summary);
+    setShowFinalizeModal(true);
+  };
+
+  const handleConfirmFinalize = () => {
+    if (!finalizeMatchId) return;
+    const proScore = parseInt(finalProScore, 10);
+    const conScore = parseInt(finalConScore, 10);
+    if (isNaN(proScore) || isNaN(conScore)) {
+      showToast("info", "请输入有效的比分数字");
+      return;
+    }
+    const winner: "pro" | "con" = proScore >= conScore ? "pro" : "con";
+    updateMatch(finalizeMatchId, {
+      result: {
+        winner,
+        proScore,
+        conScore,
+        bestSpeakerId: finalBestSpeakerId,
+        summary: finalSummary,
+      },
+    });
+    showToast("success", "评审结果已汇总并同步到赛程");
+    setShowFinalizeModal(false);
+    setFinalizeMatchId(null);
+  };
+
   const pendingTasks = tasks.filter((t) => t.status !== "completed");
   const completedTasks = tasks.filter((t) => t.status === "completed");
   const isCompleted = selectedTask?.status === "completed";
@@ -384,6 +483,27 @@ export default function Judging() {
                       );
                     })}
                   </div>
+                  {match && (
+                    <Button
+                      size="sm"
+                      variant={match.result ? "ghost" : "primary"}
+                      className="mt-3 w-full !text-xs"
+                      disabled={completed === 0}
+                      onClick={() => handleOpenFinalize(match.id)}
+                    >
+                      {match.result ? (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+                          已汇总
+                        </>
+                      ) : (
+                        <>
+                          <FileCheck2 className="w-3.5 h-3.5 mr-1.5" />
+                          汇总评审结果
+                        </>
+                      )}
+                    </Button>
+                  )}
                 </div>
               );
             })}
@@ -869,6 +989,94 @@ export default function Judging() {
           )}
         </div>
       </div>
+
+      {showFinalizeModal && finalizeMatchId && (
+        <Modal
+          open={showFinalizeModal}
+          onClose={() => setShowFinalizeModal(false)}
+          title="汇总评审结果"
+        >
+          <div className="space-y-5">
+            <p className="text-sm text-ink-500">
+              以下结果基于所有已完成评委的打分自动汇总，可手动调整后确认同步到赛程。
+            </p>
+
+            <div className="p-5 rounded-2xl bg-gradient-to-br from-cream-50 to-primary-500/5 border border-cream-200">
+              <div className="grid grid-cols-3 items-center gap-2">
+                <div className="text-center">
+                  <p className="text-[11px] text-ink-400 mb-1">正方均分</p>
+                  <input
+                    type="number"
+                    value={finalProScore}
+                    onChange={(e) => setFinalProScore(e.target.value)}
+                    className="w-full text-center text-3xl font-mono font-bold text-victory bg-white border border-cream-200 rounded-lg py-2 focus:outline-none focus:ring-2 focus:ring-victory/30"
+                  />
+                </div>
+                <div className="text-center text-2xl text-ink-300 font-mono">VS</div>
+                <div className="text-center">
+                  <p className="text-[11px] text-ink-400 mb-1">反方均分</p>
+                  <input
+                    type="number"
+                    value={finalConScore}
+                    onChange={(e) => setFinalConScore(e.target.value)}
+                    className="w-full text-center text-3xl font-mono font-bold text-primary-700 bg-white border border-cream-200 rounded-lg py-2 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+                  />
+                </div>
+              </div>
+              <div className="mt-4 text-center">
+                <Badge variant={(parseInt(finalProScore, 10) >= parseInt(finalConScore, 10)) ? "success" : "primary"} className="!px-4 !py-1 !text-xs">
+                  {parseInt(finalProScore, 10) >= parseInt(finalConScore, 10)
+                    ? "正方获胜（预计）"
+                    : "反方获胜（预计）"}
+                </Badge>
+              </div>
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-ink-700 mb-2 flex items-center gap-1.5">
+                <Award className="w-4 h-4 text-accent-600" />
+                全场最佳辩手
+              </p>
+              <select
+                value={finalBestSpeakerId}
+                onChange={(e) => setFinalBestSpeakerId(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-lg bg-white border border-cream-300 text-sm text-ink-800 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
+              >
+                <option value="">（暂不指定）</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <p className="text-sm font-semibold text-ink-700 mb-2 flex items-center gap-1.5">
+                <Quote className="w-4 h-4 text-primary-600" />
+                赛后总结评语
+              </p>
+              <textarea
+                value={finalSummary}
+                onChange={(e) => setFinalSummary(e.target.value)}
+                rows={4}
+                className="w-full px-4 py-3 rounded-lg bg-white border border-cream-300 text-sm text-ink-800 focus:outline-none focus:ring-2 focus:ring-primary-500/30 resize-none"
+                placeholder="一句话总结本场比赛的整体表现、亮点和建议..."
+              />
+            </div>
+
+            <div className="flex gap-3 pt-3">
+              <Button variant="ghost" className="flex-1" onClick={() => setShowFinalizeModal(false)}>
+                取消
+              </Button>
+              <Button variant="accent" className="flex-1" onClick={handleConfirmFinalize}>
+                <Sparkles className="w-4 h-4 mr-1.5" />
+                确认并同步到赛程
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
